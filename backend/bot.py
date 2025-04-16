@@ -25,7 +25,7 @@ class QueueHandler(logging.Handler):
     def emit(self, record):
         # Formater le message et le mettre dans la file d'attente
         # Ignorer les messages DEBUG pour ne pas surcharger le frontend
-        if record.levelno >= logging.INFO: # CORRECTION: >= au lieu de &gt;=
+        if record.levelno >= logging.INFO: # Utiliser >= pour la comparaison
             log_entry = self.format(record)
             self.log_queue.put(log_entry)
 
@@ -77,7 +77,7 @@ bot_config = {
     "RSI_OVERSOLD": getattr(config, 'RSI_OVERSOLD', 25), "VOLUME_AVG_PERIOD": getattr(config, 'VOLUME_AVG_PERIOD', 20),
     "USE_EMA_FILTER": getattr(config, 'USE_EMA_FILTER', True), "USE_VOLUME_CONFIRMATION": getattr(config, 'USE_VOLUME_CONFIRMATION', False),
 }
-client = None
+client = None # Le client global est géré par le wrapper
 def initialize_binance_client():
     global client
     initialized_client = binance_client_wrapper.get_client()
@@ -90,17 +90,17 @@ def interval_to_seconds(interval_str):
         elif unit == 'h': return value * 60 * 60
         elif unit == 'd': return value * 60 * 60 * 24
         elif unit == 'w': return value * 60 * 60 * 24 * 7
-        elif unit == 'M': return value * 60 * 60 * 24 * 30
+        elif unit == 'M': return value * 60 * 60 * 24 * 30 # Approximation pour mois
         else: logging.warning(f"Intervalle non reconnu pour conversion secondes: {interval_str}"); return 0
     except (IndexError, ValueError, TypeError): logging.warning(f"Format d'intervalle invalide pour conversion secondes: {interval_str}"); return 0
 # --- État Global du Bot (Statut, Position, etc.) ---
 bot_state = {
     "status": "Arrêté",
     "in_position": False,
-    "available_balance": 0.0, # Solde USDT
+    "available_balance": 0.0, # Solde Quote Asset (ex: USDT)
     "current_price": 0.0,
-    "symbol_quantity": 0.0,   # AJOUT: Quantité du symbole possédée
-    "base_asset": "",         # AJOUT: Nom de l'asset de base (ex: BTC)
+    "symbol_quantity": 0.0,   # Quantité Base Asset (ex: BTC)
+    "base_asset": "",         # Nom de l'asset de base (ex: BTC)
     "quote_asset": "USDT",    # Nom de l'asset de cotation (ex: USDT)
     "symbol": SYMBOL,
     "timeframe": bot_config["TIMEFRAME_STR"],
@@ -121,11 +121,11 @@ def get_status():
         'symbol': bot_state['symbol'],
         'timeframe': bot_state['timeframe'],
         'in_position': bot_state['in_position'],
-        'available_balance': bot_state['available_balance'], # Solde USDT
+        'available_balance': bot_state['available_balance'], # Solde Quote Asset
         'current_price': bot_state['current_price'],
-        'symbol_quantity': bot_state['symbol_quantity'],     # AJOUT
-        'base_asset': bot_state['base_asset'],               # AJOUT
-        'quote_asset': bot_state['quote_asset'],             # AJOUT (pour info)
+        'symbol_quantity': bot_state['symbol_quantity'],     # Quantité Base Asset
+        'base_asset': bot_state['base_asset'],               # Nom Base Asset
+        'quote_asset': bot_state['quote_asset'],             # Nom Quote Asset
     }
     return jsonify(status_data)
 @app.route('/parameters', methods=['GET'])
@@ -147,36 +147,36 @@ def set_parameters():
         validated_params["TIMEFRAME_STR"] = new_timeframe
         if new_timeframe != bot_config["TIMEFRAME_STR"]: restart_recommended = True
 
-        # --- CORRECTIONS DES COMPARAISONS ---
+        # --- Utilisation des opérateurs de comparaison corrects ---
         validated_params["RISK_PER_TRADE"] = float(new_params.get("RISK_PER_TRADE", bot_config["RISK_PER_TRADE"]))
-        if not (0 < validated_params["RISK_PER_TRADE"] < 1): raise ValueError("RISK_PER_TRADE") # &lt; devient <
+        if not (0 < validated_params["RISK_PER_TRADE"] < 1): raise ValueError("RISK_PER_TRADE doit être entre 0 et 1 (exclus)")
 
         validated_params["CAPITAL_ALLOCATION"] = float(new_params.get("CAPITAL_ALLOCATION", bot_config["CAPITAL_ALLOCATION"]))
-        if not (0 < validated_params["CAPITAL_ALLOCATION"] <= 1): raise ValueError("CAPITAL_ALLOCATION") # &lt; devient <
+        if not (0 < validated_params["CAPITAL_ALLOCATION"] <= 1): raise ValueError("CAPITAL_ALLOCATION doit être entre 0 (exclus) et 1 (inclus)")
 
         validated_params["EMA_SHORT_PERIOD"] = int(new_params.get("EMA_SHORT_PERIOD", bot_config["EMA_SHORT_PERIOD"]))
-        if validated_params["EMA_SHORT_PERIOD"] <= 0: raise ValueError("EMA_SHORT_PERIOD") # &lt; devient <
+        if validated_params["EMA_SHORT_PERIOD"] <= 0: raise ValueError("EMA_SHORT_PERIOD doit être > 0")
 
         validated_params["EMA_LONG_PERIOD"] = int(new_params.get("EMA_LONG_PERIOD", bot_config["EMA_LONG_PERIOD"]))
-        if validated_params["EMA_LONG_PERIOD"] <= validated_params["EMA_SHORT_PERIOD"]: raise ValueError("EMA_LONG_PERIOD <= EMA_SHORT_PERIOD") # &lt; devient <
+        if validated_params["EMA_LONG_PERIOD"] <= validated_params["EMA_SHORT_PERIOD"]: raise ValueError("EMA_LONG_PERIOD doit être > EMA_SHORT_PERIOD")
 
         validated_params["EMA_FILTER_PERIOD"] = int(new_params.get("EMA_FILTER_PERIOD", bot_config["EMA_FILTER_PERIOD"]))
-        if validated_params["EMA_FILTER_PERIOD"] <= 0: raise ValueError("EMA_FILTER_PERIOD") # &lt; devient <
+        if validated_params["EMA_FILTER_PERIOD"] <= 0: raise ValueError("EMA_FILTER_PERIOD doit être > 0")
 
         validated_params["RSI_PERIOD"] = int(new_params.get("RSI_PERIOD", bot_config["RSI_PERIOD"]))
-        if validated_params["RSI_PERIOD"] <= 1: raise ValueError("RSI_PERIOD") # &lt; devient <
+        if validated_params["RSI_PERIOD"] <= 1: raise ValueError("RSI_PERIOD doit être > 1")
 
         validated_params["RSI_OVERBOUGHT"] = int(new_params.get("RSI_OVERBOUGHT", bot_config["RSI_OVERBOUGHT"]))
-        if not (50 < validated_params["RSI_OVERBOUGHT"] <= 100): raise ValueError("RSI_OVERBOUGHT") # &lt; devient <
+        if not (50 < validated_params["RSI_OVERBOUGHT"] <= 100): raise ValueError("RSI_OVERBOUGHT doit être entre 50 (exclus) et 100 (inclus)")
 
         validated_params["RSI_OVERSOLD"] = int(new_params.get("RSI_OVERSOLD", bot_config["RSI_OVERSOLD"]))
-        if not (0 <= validated_params["RSI_OVERSOLD"] < 50): raise ValueError("RSI_OVERSOLD") # &lt; devient <
+        if not (0 <= validated_params["RSI_OVERSOLD"] < 50): raise ValueError("RSI_OVERSOLD doit être entre 0 (inclus) et 50 (exclus)")
 
-        if validated_params["RSI_OVERSOLD"] >= validated_params["RSI_OVERBOUGHT"]: raise ValueError("RSI_OVERSOLD >= RSI_OVERBOUGHT") # &gt; devient >
+        if validated_params["RSI_OVERSOLD"] >= validated_params["RSI_OVERBOUGHT"]: raise ValueError("RSI_OVERSOLD doit être < RSI_OVERBOUGHT")
 
         validated_params["VOLUME_AVG_PERIOD"] = int(new_params.get("VOLUME_AVG_PERIOD", bot_config["VOLUME_AVG_PERIOD"]))
-        if validated_params["VOLUME_AVG_PERIOD"] <= 0: raise ValueError("VOLUME_AVG_PERIOD") # &lt; devient <
-        # --- FIN CORRECTIONS ---
+        if validated_params["VOLUME_AVG_PERIOD"] <= 0: raise ValueError("VOLUME_AVG_PERIOD doit être > 0")
+        # --- Fin corrections ---
 
         validated_params["USE_EMA_FILTER"] = bool(new_params.get("USE_EMA_FILTER", bot_config["USE_EMA_FILTER"]))
         validated_params["USE_VOLUME_CONFIRMATION"] = bool(new_params.get("USE_VOLUME_CONFIRMATION", bot_config["USE_VOLUME_CONFIRMATION"]))
@@ -184,6 +184,7 @@ def set_parameters():
         logging.error(f"Erreur de validation des paramètres: {e}") # Ce log ira au frontend
         return jsonify({"success": False, "message": f"Paramètres invalides: {e}"}), 400
     with config_lock: bot_config.update(validated_params); logging.info(f"Paramètres mis à jour avec succès.") # Ce log ira au frontend
+    # Mettre à jour les variables globales de la stratégie (si elles sont utilisées directement)
     strategy.EMA_SHORT_PERIOD = bot_config["EMA_SHORT_PERIOD"]
     strategy.EMA_LONG_PERIOD = bot_config["EMA_LONG_PERIOD"]
     strategy.EMA_FILTER_PERIOD = bot_config["EMA_FILTER_PERIOD"]
@@ -215,7 +216,7 @@ def stop_bot_route():
     bot_state["status"] = "Arrêt..."; bot_state["stop_requested"] = True
     return jsonify({"success": True, "message": "Ordre d'arrêt envoyé."})
 
-# --- NOUVELLE ROUTE POUR LE STREAMING DES LOGS ---
+# --- ROUTE POUR LE STREAMING DES LOGS ---
 @app.route('/stream_logs')
 def stream_logs():
     def generate():
@@ -224,7 +225,7 @@ def stream_logs():
         logging.info("Client connecté au flux de logs.") # Log pour le backend uniquement
         try:
             while True:
-                # Attendre un message de la file d'attente (bloquant)
+                # Attendre un message de la file d'attente (bloquant avec timeout)
                 try:
                     log_entry = log_queue.get(timeout=1) # Timeout pour vérifier périodiquement
                     # Envoyer au format SSE: "data: message\n\n"
@@ -243,7 +244,7 @@ def stream_logs():
             pass
     # Retourner une réponse en streaming avec le bon mimetype
     return Response(generate(), mimetype='text/event-stream')
-# --- FIN NOUVELLE ROUTE ---
+# --- FIN ROUTE LOGS ---
 
 
 # --- Boucle Principale du Bot ---
@@ -271,7 +272,7 @@ def run_bot():
         logging.info(f"Solde {bot_state['quote_asset']} initial : {bot_state['available_balance']}") # Frontend
 
         initial_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
-        if initial_base_quantity is None: initial_base_quantity = 0.0 # Considérer 0 si erreur
+        if initial_base_quantity is None: initial_base_quantity = 0.0 # Considérer 0 si erreur ou non possédé
         bot_state["symbol_quantity"] = initial_base_quantity
         logging.info(f"Quantité {bot_state['base_asset']} initiale : {bot_state['symbol_quantity']}") # Frontend
         # --- Fin récupération soldes initiaux ---
@@ -281,22 +282,38 @@ def run_bot():
             local_timeframe_str = current_config["TIMEFRAME_STR"]
             local_risk_per_trade = current_config["RISK_PER_TRADE"]
             local_capital_allocation = current_config["CAPITAL_ALLOCATION"]
+            # Récupérer les paramètres de stratégie actuels
             local_ema_short = current_config["EMA_SHORT_PERIOD"]; local_ema_long = current_config["EMA_LONG_PERIOD"]
             local_rsi_period = current_config["RSI_PERIOD"]; use_ema_filter = current_config["USE_EMA_FILTER"]
             ema_filter_period = current_config["EMA_FILTER_PERIOD"]
+
+            # Obtenir la constante Binance pour le timeframe
             binance_constant_name = TIMEFRAME_CONSTANT_MAP.get(local_timeframe_str)
             local_timeframe_interval = getattr(BinanceClient, binance_constant_name, None) if binance_constant_name else None
             if local_timeframe_interval is None:
                 logging.error(f"Constante Binance non trouvée pour timeframe '{local_timeframe_str}'. Utilisation de 5m par défaut.") # Frontend
                 local_timeframe_str = '5m'; local_timeframe_interval = BinanceClient.KLINE_INTERVAL_5MINUTE
+            # Mettre à jour l'état si le timeframe a changé (pour affichage)
             if bot_state["timeframe"] != local_timeframe_str:
                  logging.info(f"Changement de timeframe détecté pour {local_timeframe_str}. Redémarrage conseillé.") # Frontend
                  bot_state["timeframe"] = local_timeframe_str
             try:
-                # --- Mise à jour Prix et Soldes ---
-                current_price = binance_client_wrapper.get_current_price(SYMBOL)
-                if current_price is not None: bot_state["current_price"] = current_price; logging.info(f"Prix actuel {SYMBOL}: {current_price}") # Frontend
-                else: logging.warning(f"Impossible de récupérer le prix actuel pour {SYMBOL}") # Frontend
+                 # --- Mise à jour Prix et Soldes ---
+                # CORRECTION: Call get_symbol_ticker and extract price
+                ticker_info = binance_client_wrapper.get_symbol_ticker(symbol=SYMBOL)
+                current_price = None # Default to None
+                if ticker_info and 'price' in ticker_info:
+                    try:
+                        current_price = float(ticker_info['price'])
+                        bot_state["current_price"] = current_price
+                        logging.info(f"Prix actuel {SYMBOL}: {current_price}") # Frontend
+                    except (ValueError, TypeError) as price_err:
+                        logging.warning(f"Impossible de convertir le prix '{ticker_info['price']}' en float: {price_err}") # Frontend
+                else:
+                    logging.warning(f"Impossible de récupérer les informations de ticker ou le prix pour {SYMBOL}") # Frontend
+                    if ticker_info:
+                         logging.warning(f"Ticker info reçu: {ticker_info}") # Log pour débogage
+
 
                 current_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
                 if current_quote_balance is not None and current_quote_balance != bot_state["available_balance"]:
@@ -307,15 +324,20 @@ def run_bot():
                     logging.info(f"Mise à jour quantité {bot_state['base_asset']} : {current_base_quantity}"); bot_state["symbol_quantity"] = current_base_quantity # Frontend
                 # --- Fin Mise à jour ---
 
+                # 1. Récupérer Klines
                 required_limit = max(local_ema_long, ema_filter_period if use_ema_filter else 0, local_rsi_period) + 5
                 klines = binance_client_wrapper.get_klines(SYMBOL, local_timeframe_interval, limit=required_limit)
                 if not klines: logging.warning("Aucune donnée kline reçue, attente..."); time.sleep(30); continue # Frontend
+
+                # 2. Calculer Indicateurs/Signaux
                 signals_df = strategy.calculate_indicators_and_signals(klines)
                 if signals_df is None or signals_df.empty: logging.warning("Impossible de calculer indicateurs/signaux, attente."); time.sleep(30); continue # Frontend
                 current_data = signals_df.iloc[-1]
+                # logging.debug(f"Dernière bougie ({current_data['Close time']}): Close={current_data['Close']}, Signal={current_data['signal']}") # DEBUG
 
+                # 3. Logique d'Entrée/Sortie
                 if not bot_state["in_position"]:
-                    # check_entry_conditions logue le signal et le placement d'ordre
+                    # check_entry_conditions logue le signal et le placement d'ordre (via le wrapper)
                     entered = strategy.check_entry_conditions(current_data, SYMBOL, local_risk_per_trade, local_capital_allocation, bot_state["available_balance"], symbol_info)
                     if entered:
                         bot_state["in_position"] = True
@@ -326,25 +348,44 @@ def run_bot():
                         if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
                 else:
                     # logging.debug(f"En position pour {SYMBOL}. Vérification sortie...") # DEBUG
-                    # closed = strategy.check_exit_conditions(SYMBOL)
-                    # if closed: ...
-                    pass
+                    # Implémenter la logique de sortie ici, par exemple:
+                    # closed = strategy.check_exit_conditions(current_data, SYMBOL, bot_state["symbol_quantity"], symbol_info)
+                    # if closed:
+                    #     bot_state["in_position"] = False
+                    #     # Rafraîchir les deux soldes après une sortie réussie
+                    #     refreshed_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
+                    #     if refreshed_quote_balance is not None: bot_state["available_balance"] = refreshed_quote_balance
+                    #     refreshed_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
+                    #     if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
+                    pass # Placeholder pour la logique de sortie
+
+                # 4. Attendre la prochaine bougie
                 if bot_state["stop_requested"]: break
+
+                # logging.debug("Cycle terminé, calcul attente prochaine bougie...") # DEBUG
                 interval_seconds = interval_to_seconds(local_timeframe_str)
                 if interval_seconds > 0:
                     current_time_s = time.time(); time_to_next_candle_s = interval_seconds - (current_time_s % interval_seconds) + 1
+                    # logging.debug(f"Attente de {time_to_next_candle_s:.2f}s...") # DEBUG
                     sleep_interval = 1; end_sleep = time.time() + time_to_next_candle_s
+                    # Boucle de sommeil interruptible
                     while time.time() < end_sleep and not bot_state["stop_requested"]:
-                        time.sleep(min(sleep_interval, max(0, end_sleep - time.time())))
-                else: logging.warning(f"Intervalle de sommeil invalide pour {local_timeframe_str}. Attente 60s."); time.sleep(60) # Frontend
+                        time.sleep(min(sleep_interval, max(0, end_sleep - time.time()))) # Attendre au max le temps restant
+                else:
+                    logging.warning(f"Intervalle de sommeil invalide pour {local_timeframe_str}. Attente 60s."); time.sleep(60) # Frontend
             except (BinanceAPIException, BinanceRequestException) as e:
                 logging.error(f"Erreur API/Request Binance: {e}") # Frontend
-                if isinstance(e, BinanceAPIException) and e.status_code == 401: logging.error("Erreur Auth Binance. Arrêt."); bot_state["status"] = "Erreur Auth"; bot_state["stop_requested"] = True # Frontend
-                else: bot_state["status"] = "Erreur API/Req"
-                time.sleep(60)
-            except Exception as e: logging.exception(f"Erreur inattendue dans run_bot"); bot_state["status"] = "Erreur Interne"; time.sleep(60) # Frontend (avec traceback)
-    except Exception as e: logging.exception(f"Erreur majeure lors de l'initialisation de run_bot"); bot_state["status"] = "Erreur Init" # Frontend (avec traceback)
-    finally: logging.info("Boucle du bot terminée."); bot_state["status"] = "Arrêté"; bot_state["in_position"] = False; bot_state["thread"] = None # Frontend
+                if isinstance(e, BinanceAPIException) and e.status_code == 401:
+                    logging.error("Erreur Auth Binance (clés API invalides?). Arrêt."); bot_state["status"] = "Erreur Auth"; bot_state["stop_requested"] = True # Frontend
+                else:
+                    bot_state["status"] = "Erreur API/Req"
+                time.sleep(60) # Attendre avant de réessayer en cas d'erreur API
+            except Exception as e:
+                logging.exception(f"Erreur inattendue dans run_bot"); bot_state["status"] = "Erreur Interne"; time.sleep(60) # Frontend (avec traceback)
+    except Exception as e:
+        logging.exception(f"Erreur majeure lors de l'initialisation de run_bot"); bot_state["status"] = "Erreur Init" # Frontend (avec traceback)
+    finally:
+        logging.info("Boucle du bot terminée."); bot_state["status"] = "Arrêté"; bot_state["in_position"] = False; bot_state["thread"] = None # Frontend
 
 # --- Démarrage Application ---
 if __name__ == "__main__":
@@ -353,4 +394,5 @@ if __name__ == "__main__":
     werkzeug_log.setLevel(logging.ERROR)
 
     logging.info("Démarrage de l'API Flask...") # Ce log ira au frontend
+    # Utiliser debug=False et use_reloader=False pour éviter les problèmes avec les threads
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
