@@ -18,28 +18,55 @@
             <p>Symbole : <span id="symbol-value">N/A</span></p>
             <p>Timeframe : <span id="timeframe-value">N/A</span></p>
             <p>Balance (<span id="quote-asset-label">USDT</span>) : <span id="balance-value">N/A</span></p>
-            <!-- AJOUT LIGNE QUANTITE -->
             <p>Quantité (<span id="base-asset-label">N/A</span>) : <span id="quantity-value">N/A</span></p>
-            <!-- FIN AJOUT -->
             <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="price-value">N/A</span></p>
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
         </section>
 
+        <!-- AJOUT SECTION HISTORIQUE -->
+        <section id="order-history">
+            <h2>Historique des Ordres (Session)</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date/Heure</th>
+                            <th>Symbole</th>
+                            <th>Side</th>
+                            <th>Type</th>
+                            <th>Qté Demandée</th>
+                            <th>Qté Exécutée</th>
+                            <th>Prix / Valeur</th>
+                            <th>Statut</th>
+                            <th>ID Ordre</th>
+                        </tr>
+                    </thead>
+                    <tbody id="order-history-body">
+                        <!-- Les lignes seront ajoutées par JS -->
+                        <tr><td colspan="9" id="order-history-placeholder">Aucun ordre dans l'historique de cette session.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        <!-- FIN AJOUT -->
+
+
         <section id="logs">
-            <h2>Logs</h2>
-            <pre id="log-output">En attente des logs du backend...</pre>
+             <h2>Logs</h2>
+             <pre id="log-output">En attente des logs du backend...</pre>
         </section>
 
         <section id="controls">
-            <h2>Contrôles</h2>
-            <button id="start-bot-btn">Démarrer le Bot</button>
-            <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
+             <h2>Contrôles</h2>
+             <button id="start-bot-btn">Démarrer le Bot</button>
+             <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
         </section>
 
         <section id="parameters">
-            <h2>Paramètres de Stratégie</h2>
-            <div class="param-grid">
-                <div>
+             <h2>Paramètres de Stratégie</h2>
+             <div class="param-grid">
+                 <!-- ... (Tous les inputs de paramètres inchangés) ... -->
+                 <div>
                     <label for="param-timeframe">Timeframe :</label>
                     <select id="param-timeframe" name="TIMEFRAME_STR">
                         <option value="1m">1m</option> <option value="3m">3m</option> <option value="5m">5m</option>
@@ -89,9 +116,9 @@
                     <input type="checkbox" id="param-use-volume" name="USE_VOLUME_CONFIRMATION">
                     <label for="param-use-volume">Utiliser Confirmation Volume</label>
                 </div>
-            </div>
-            <button id="save-params-btn">Sauvegarder les Paramètres</button>
-            <p id="param-save-status"></p>
+             </div>
+             <button id="save-params-btn">Sauvegarder les Paramètres</button>
+             <p id="param-save-status"></p>
         </section>
 
     </main>

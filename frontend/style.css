@@ -141,3 +141,73 @@ footer {
     font-style: italic;
 }
 
+#order-history {
+    background-color: #f9f9f9;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+#order-history h2 {
+    margin-top: 0;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.table-container {
+    max-height: 400px; /* Limiter la hauteur et ajouter un scroll si besoin */
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+#order-history table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+#order-history th,
+#order-history td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+    white-space: nowrap; /* Empêcher le retour à la ligne */
+}
+
+#order-history thead th {
+    background-color: #f2f2f2;
+    position: sticky; /* Garder l'en-tête visible lors du scroll */
+    top: 0;
+    z-index: 1;
+}
+
+#order-history tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+#order-history tbody tr:hover {
+    background-color: #e9e9e9;
+}
+
+#order-history-placeholder td {
+    text-align: center;
+    font-style: italic;
+    color: #888;
+    padding: 20px;
+}
+
+/* Optionnel: Styles pour les statuts */
+.status-filled {
+    /* background-color: #e6ffed; */ /* Vert léger */
+}
+.status-canceled, .status-rejected, .status-expired {
+     color: #999;
+     /* background-color: #ffebeb; */ /* Rouge léger */
+}
+.status-new, .status-partially_filled {
+     /* background-color: #e6f7ff; */ /* Bleu léger */
+}

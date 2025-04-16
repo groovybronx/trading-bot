@@ -105,7 +105,9 @@ bot_state = {
     "symbol": SYMBOL,
     "timeframe": bot_config["TIMEFRAME_STR"],
     "thread": None,
-    "stop_requested": False
+    "stop_requested": False,
+    "order_history": [],      # AJOUT: Historique des ordres de la session
+    "max_history_length": 100 # AJOUT: Limite de l'historique en mémoire
 }
 
 # --- Flask App ---
@@ -116,18 +118,21 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 @app.route('/status')
 def get_status():
     """Retourne le statut actuel du bot."""
-    status_data = {
-        'status': bot_state['status'],
-        'symbol': bot_state['symbol'],
-        'timeframe': bot_state['timeframe'],
-        'in_position': bot_state['in_position'],
-        'available_balance': bot_state['available_balance'], # Solde Quote Asset
-        'current_price': bot_state['current_price'],
-        'symbol_quantity': bot_state['symbol_quantity'],     # Quantité Base Asset
-        'base_asset': bot_state['base_asset'],               # Nom Base Asset
-        'quote_asset': bot_state['quote_asset'],             # Nom Quote Asset
-    }
+    # Utiliser le lock pour un accès sûr à bot_state
+    with config_lock:
+        status_data = {
+            'status': bot_state['status'],
+            'symbol': bot_state['symbol'],
+            'timeframe': bot_state['timeframe'],
+            'in_position': bot_state['in_position'],
+            'available_balance': bot_state['available_balance'], # Solde Quote Asset
+            'current_price': bot_state['current_price'],
+            'symbol_quantity': bot_state['symbol_quantity'],     # Quantité Base Asset
+            'base_asset': bot_state['base_asset'],               # Nom Base Asset
+            'quote_asset': bot_state['quote_asset'],             # Nom Quote Asset
+        }
     return jsonify(status_data)
+
 @app.route('/parameters', methods=['GET'])
 def get_parameters():
     with config_lock: current_config = bot_config.copy()
@@ -142,49 +147,38 @@ def set_parameters():
     restart_recommended = False
     validated_params = {}
     try:
+        # ... (Validation des paramètres inchangée, avec les opérateurs < > corrects) ...
         new_timeframe = str(new_params.get("TIMEFRAME_STR", bot_config["TIMEFRAME_STR"]))
         if new_timeframe not in VALID_TIMEFRAMES: raise ValueError(f"TIMEFRAME_STR invalide.")
         validated_params["TIMEFRAME_STR"] = new_timeframe
         if new_timeframe != bot_config["TIMEFRAME_STR"]: restart_recommended = True
-
-        # --- Utilisation des opérateurs de comparaison corrects ---
         validated_params["RISK_PER_TRADE"] = float(new_params.get("RISK_PER_TRADE", bot_config["RISK_PER_TRADE"]))
         if not (0 < validated_params["RISK_PER_TRADE"] < 1): raise ValueError("RISK_PER_TRADE doit être entre 0 et 1 (exclus)")
-
         validated_params["CAPITAL_ALLOCATION"] = float(new_params.get("CAPITAL_ALLOCATION", bot_config["CAPITAL_ALLOCATION"]))
         if not (0 < validated_params["CAPITAL_ALLOCATION"] <= 1): raise ValueError("CAPITAL_ALLOCATION doit être entre 0 (exclus) et 1 (inclus)")
-
         validated_params["EMA_SHORT_PERIOD"] = int(new_params.get("EMA_SHORT_PERIOD", bot_config["EMA_SHORT_PERIOD"]))
         if validated_params["EMA_SHORT_PERIOD"] <= 0: raise ValueError("EMA_SHORT_PERIOD doit être > 0")
-
         validated_params["EMA_LONG_PERIOD"] = int(new_params.get("EMA_LONG_PERIOD", bot_config["EMA_LONG_PERIOD"]))
         if validated_params["EMA_LONG_PERIOD"] <= validated_params["EMA_SHORT_PERIOD"]: raise ValueError("EMA_LONG_PERIOD doit être > EMA_SHORT_PERIOD")
-
         validated_params["EMA_FILTER_PERIOD"] = int(new_params.get("EMA_FILTER_PERIOD", bot_config["EMA_FILTER_PERIOD"]))
         if validated_params["EMA_FILTER_PERIOD"] <= 0: raise ValueError("EMA_FILTER_PERIOD doit être > 0")
-
         validated_params["RSI_PERIOD"] = int(new_params.get("RSI_PERIOD", bot_config["RSI_PERIOD"]))
         if validated_params["RSI_PERIOD"] <= 1: raise ValueError("RSI_PERIOD doit être > 1")
-
         validated_params["RSI_OVERBOUGHT"] = int(new_params.get("RSI_OVERBOUGHT", bot_config["RSI_OVERBOUGHT"]))
         if not (50 < validated_params["RSI_OVERBOUGHT"] <= 100): raise ValueError("RSI_OVERBOUGHT doit être entre 50 (exclus) et 100 (inclus)")
-
         validated_params["RSI_OVERSOLD"] = int(new_params.get("RSI_OVERSOLD", bot_config["RSI_OVERSOLD"]))
         if not (0 <= validated_params["RSI_OVERSOLD"] < 50): raise ValueError("RSI_OVERSOLD doit être entre 0 (inclus) et 50 (exclus)")
-
         if validated_params["RSI_OVERSOLD"] >= validated_params["RSI_OVERBOUGHT"]: raise ValueError("RSI_OVERSOLD doit être < RSI_OVERBOUGHT")
-
         validated_params["VOLUME_AVG_PERIOD"] = int(new_params.get("VOLUME_AVG_PERIOD", bot_config["VOLUME_AVG_PERIOD"]))
         if validated_params["VOLUME_AVG_PERIOD"] <= 0: raise ValueError("VOLUME_AVG_PERIOD doit être > 0")
-        # --- Fin corrections ---
-
         validated_params["USE_EMA_FILTER"] = bool(new_params.get("USE_EMA_FILTER", bot_config["USE_EMA_FILTER"]))
         validated_params["USE_VOLUME_CONFIRMATION"] = bool(new_params.get("USE_VOLUME_CONFIRMATION", bot_config["USE_VOLUME_CONFIRMATION"]))
+
     except (ValueError, TypeError) as e:
         logging.error(f"Erreur de validation des paramètres: {e}") # Ce log ira au frontend
         return jsonify({"success": False, "message": f"Paramètres invalides: {e}"}), 400
     with config_lock: bot_config.update(validated_params); logging.info(f"Paramètres mis à jour avec succès.") # Ce log ira au frontend
-    # Mettre à jour les variables globales de la stratégie (si elles sont utilisées directement)
+    # Mettre à jour les variables globales de la stratégie
     strategy.EMA_SHORT_PERIOD = bot_config["EMA_SHORT_PERIOD"]
     strategy.EMA_LONG_PERIOD = bot_config["EMA_LONG_PERIOD"]
     strategy.EMA_FILTER_PERIOD = bot_config["EMA_FILTER_PERIOD"]
@@ -204,6 +198,8 @@ def start_bot_route():
     if bot_state["thread"] is not None and bot_state["thread"].is_alive(): return jsonify({"success": False, "message": "Le bot est déjà en cours."}), 400
     if not initialize_binance_client(): return jsonify({"success": False, "message": "Échec de l'initialisation du client Binance."}), 500
     logging.info("Démarrage du bot demandé...") # Ce log ira au frontend
+    with config_lock: # Réinitialiser l'historique au démarrage
+        bot_state["order_history"] = []
     bot_state["status"] = "Démarrage..."; bot_state["stop_requested"] = False
     bot_state["thread"] = threading.Thread(target=run_bot, daemon=True); bot_state["thread"].start()
     time.sleep(1); return jsonify({"success": True, "message": "Ordre de démarrage envoyé."})
@@ -219,32 +215,35 @@ def stop_bot_route():
 # --- ROUTE POUR LE STREAMING DES LOGS ---
 @app.route('/stream_logs')
 def stream_logs():
+    # ... (inchangée) ...
     def generate():
-        # Envoyer un message initial pour confirmer la connexion au frontend
         yield f"data: Connexion au flux de logs établie.\n\n"
-        logging.info("Client connecté au flux de logs.") # Log pour le backend uniquement
+        logging.info("Client connecté au flux de logs.")
         try:
             while True:
-                # Attendre un message de la file d'attente (bloquant avec timeout)
                 try:
-                    log_entry = log_queue.get(timeout=1) # Timeout pour vérifier périodiquement
-                    # Envoyer au format SSE: "data: message\n\n"
+                    log_entry = log_queue.get(timeout=1)
                     yield f"data: {log_entry}\n\n"
-                    log_queue.task_done() # Marquer la tâche comme terminée
+                    log_queue.task_done()
                 except queue.Empty:
-                    # Envoyer un commentaire keep-alive pour maintenir la connexion ouverte
-                    # si aucun log n'est généré pendant un certain temps
                     yield ": keep-alive\n\n"
                     continue
         except GeneratorExit:
-            # Se produit lorsque le client se déconnecte
             logging.info("Client déconnecté du flux de logs.")
         finally:
-            # Nettoyage si nécessaire
             pass
-    # Retourner une réponse en streaming avec le bon mimetype
     return Response(generate(), mimetype='text/event-stream')
-# --- FIN ROUTE LOGS ---
+
+# --- NOUVELLE ROUTE POUR L'HISTORIQUE DES ORDRES ---
+@app.route('/order_history')
+def get_order_history():
+    """Retourne l'historique des ordres de la session actuelle."""
+    # Retourner une copie pour éviter les modifications concurrentes pendant la sérialisation
+    with config_lock: # Utiliser le lock existant pour protéger l'accès à bot_state
+        # Créer une copie de la liste pour la sécurité des threads
+        history_copy = list(bot_state['order_history'])
+    return jsonify(history_copy)
+# --- FIN NOUVELLE ROUTE ---
 
 
 # --- Boucle Principale du Bot ---
@@ -252,7 +251,6 @@ def run_bot():
     global bot_state, bot_config
     with config_lock: initial_config = bot_config.copy()
     initial_timeframe_str = initial_config["TIMEFRAME_STR"]
-    # Ce log ira au frontend via le QueueHandler
     logging.info(f"Démarrage effectif du bot pour {SYMBOL} sur {initial_timeframe_str}")
     bot_state["status"] = "En cours"; bot_state["timeframe"] = initial_timeframe_str
     try:
@@ -299,7 +297,6 @@ def run_bot():
                  bot_state["timeframe"] = local_timeframe_str
             try:
                  # --- Mise à jour Prix et Soldes ---
-                # CORRECTION: Call get_symbol_ticker and extract price
                 ticker_info = binance_client_wrapper.get_symbol_ticker(symbol=SYMBOL)
                 current_price = None # Default to None
                 if ticker_info and 'price' in ticker_info:
@@ -311,9 +308,7 @@ def run_bot():
                         logging.warning(f"Impossible de convertir le prix '{ticker_info['price']}' en float: {price_err}") # Frontend
                 else:
                     logging.warning(f"Impossible de récupérer les informations de ticker ou le prix pour {SYMBOL}") # Frontend
-                    if ticker_info:
-                         logging.warning(f"Ticker info reçu: {ticker_info}") # Log pour débogage
-
+                    if ticker_info: logging.warning(f"Ticker info reçu: {ticker_info}") # Log pour débogage
 
                 current_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
                 if current_quote_balance is not None and current_quote_balance != bot_state["available_balance"]:
@@ -333,13 +328,13 @@ def run_bot():
                 signals_df = strategy.calculate_indicators_and_signals(klines)
                 if signals_df is None or signals_df.empty: logging.warning("Impossible de calculer indicateurs/signaux, attente."); time.sleep(30); continue # Frontend
                 current_data = signals_df.iloc[-1]
-                # logging.debug(f"Dernière bougie ({current_data['Close time']}): Close={current_data['Close']}, Signal={current_data['signal']}") # DEBUG
 
                 # 3. Logique d'Entrée/Sortie
+                order_result = None # Initialiser le résultat de l'ordre
                 if not bot_state["in_position"]:
-                    # check_entry_conditions logue le signal et le placement d'ordre (via le wrapper)
-                    entered = strategy.check_entry_conditions(current_data, SYMBOL, local_risk_per_trade, local_capital_allocation, bot_state["available_balance"], symbol_info)
-                    if entered:
+                    # MODIFICATION: Récupérer le résultat de l'ordre depuis la stratégie
+                    order_result = strategy.check_entry_conditions(current_data, SYMBOL, local_risk_per_trade, local_capital_allocation, bot_state["available_balance"], symbol_info)
+                    if order_result: # Si un ordre a été placé avec succès
                         bot_state["in_position"] = True
                         # Rafraîchir les deux soldes après une entrée réussie
                         refreshed_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
@@ -347,30 +342,52 @@ def run_bot():
                         refreshed_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
                         if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
                 else:
-                    # logging.debug(f"En position pour {SYMBOL}. Vérification sortie...") # DEBUG
-                    # Implémenter la logique de sortie ici, par exemple:
-                    # closed = strategy.check_exit_conditions(current_data, SYMBOL, bot_state["symbol_quantity"], symbol_info)
-                    # if closed:
-                    #     bot_state["in_position"] = False
-                    #     # Rafraîchir les deux soldes après une sortie réussie
-                    #     refreshed_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
-                    #     if refreshed_quote_balance is not None: bot_state["available_balance"] = refreshed_quote_balance
-                    #     refreshed_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
-                    #     if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
-                    pass # Placeholder pour la logique de sortie
+                    # Placeholder pour la sortie - devra aussi retourner order_result si un ordre SELL est placé
+                    # order_result = strategy.check_exit_conditions(...)
+                    # if order_result:
+                    #    bot_state["in_position"] = False
+                    #    # Rafraîchir les soldes
+                    #    ...
+                    pass
+
+                # AJOUT: Enregistrer l'ordre dans l'historique si succès
+                if order_result:
+                    try:
+                        # Simplifier l'objet ordre avant de le stocker
+                        simplified_order = {
+                            # Utiliser transactTime (ms) ou fallback sur temps actuel (ms)
+                            "timestamp": order_result.get('transactTime', int(time.time() * 1000)),
+                            "orderId": order_result.get('orderId'),
+                            "symbol": order_result.get('symbol'),
+                            "side": order_result.get('side'),
+                            "type": order_result.get('type'),
+                            "origQty": order_result.get('origQty'),
+                            "executedQty": order_result.get('executedQty'),
+                            "cummulativeQuoteQty": order_result.get('cummulativeQuoteQty'), # Valeur totale (pour MARKET)
+                            "price": order_result.get('price'), # Prix limite (pour LIMIT)
+                            "status": order_result.get('status')
+                        }
+                        with config_lock: # Protéger l'accès à l'historique
+                            bot_state['order_history'].append(simplified_order)
+                            # Limiter la taille de l'historique
+                            current_history_len = len(bot_state['order_history'])
+                            max_len = bot_state['max_history_length']
+                            if current_history_len > max_len:
+                                # Garder les N derniers éléments
+                                bot_state['order_history'] = bot_state['order_history'][-max_len:]
+                        logging.info(f"Ordre {simplified_order.get('orderId', 'N/A')} ajouté à l'historique.") # Frontend
+                    except Exception as hist_err:
+                        logging.error(f"Erreur lors de l'ajout de l'ordre à l'historique: {hist_err}") # Frontend
+                # FIN AJOUT
 
                 # 4. Attendre la prochaine bougie
                 if bot_state["stop_requested"]: break
-
-                # logging.debug("Cycle terminé, calcul attente prochaine bougie...") # DEBUG
                 interval_seconds = interval_to_seconds(local_timeframe_str)
                 if interval_seconds > 0:
                     current_time_s = time.time(); time_to_next_candle_s = interval_seconds - (current_time_s % interval_seconds) + 1
-                    # logging.debug(f"Attente de {time_to_next_candle_s:.2f}s...") # DEBUG
                     sleep_interval = 1; end_sleep = time.time() + time_to_next_candle_s
-                    # Boucle de sommeil interruptible
                     while time.time() < end_sleep and not bot_state["stop_requested"]:
-                        time.sleep(min(sleep_interval, max(0, end_sleep - time.time()))) # Attendre au max le temps restant
+                        time.sleep(min(sleep_interval, max(0, end_sleep - time.time())))
                 else:
                     logging.warning(f"Intervalle de sommeil invalide pour {local_timeframe_str}. Attente 60s."); time.sleep(60) # Frontend
             except (BinanceAPIException, BinanceRequestException) as e:
@@ -396,3 +413,4 @@ if __name__ == "__main__":
     logging.info("Démarrage de l'API Flask...") # Ce log ira au frontend
     # Utiliser debug=False et use_reloader=False pour éviter les problèmes avec les threads
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
