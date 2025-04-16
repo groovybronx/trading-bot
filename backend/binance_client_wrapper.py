@@ -1,3 +1,4 @@
+# /Users/davidmichels/Desktop/trading-bot/backend/binance_client_wrapper.py
 import logging
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
@@ -16,7 +17,7 @@ except ImportError:
     API_SECRET = "VOTRE_SECRET_API_ICI"
     USE_TESTNET = False
 
-# Variable globale pour le client (ou passer le client en argument des fonctions)
+# Variable globale pour le client
 _client = None
 
 def get_client():
@@ -26,7 +27,6 @@ def get_client():
         try:
             if USE_TESTNET:
                 _client = Client(API_KEY, API_SECRET, testnet=True)
-                # _client.API_URL = 'https://testnet.binance.vision/api' # Déjà fait par testnet=True
                 logging.info("Client Binance initialisé en mode TESTNET.")
             else:
                 _client = Client(API_KEY, API_SECRET)
@@ -43,30 +43,29 @@ def get_client():
             _client = None
     return _client
 
+# Helper interne pour obtenir le client (pas besoin d'être appelé de l'extérieur)
+def _get_client_instance():
+    """Tente d'obtenir l'instance client initialisée."""
+    client = get_client() # Tente d'initialiser si besoin
+    if not client:
+         # L'erreur est déjà loggée par get_client()
+         raise ConnectionError("Client Binance non disponible ou non initialisé.")
+    return client
+
 def get_klines(symbol, interval, limit=100, retries=3, delay=5):
     """
     Récupère les données klines pour un symbole et un intervalle donnés.
     Gère les erreurs API et les tentatives multiples.
-
-    Args:
-        symbol (str): Le symbole (ex: 'BTCUSDT').
-        interval (str): L'intervalle (ex: Client.KLINE_INTERVAL_5MINUTE).
-        limit (int): Le nombre de klines à récupérer.
-        retries (int): Nombre de tentatives en cas d'erreur.
-        delay (int): Délai en secondes entre les tentatives.
-
-    Returns:
-        list: Liste des klines si succès, None sinon.
     """
-    client = get_client()
-    if not client:
-        return None
+    try:
+        client = _get_client_instance() # Utiliser le helper
+    except ConnectionError:
+        return None # Retourner None si le client n'est pas dispo
 
     for attempt in range(retries):
         try:
             klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
             logging.debug(f"Klines récupérées pour {symbol} ({interval}), limit={limit}.")
-            # Vérifier si les données sont valides (non vides)
             if not klines:
                 logging.warning(f"Aucune kline retournée pour {symbol} ({interval}). Tentative {attempt + 1}/{retries}")
                 if attempt < retries - 1:
@@ -90,20 +89,25 @@ def get_klines(symbol, interval, limit=100, retries=3, delay=5):
             else:
                 logging.error(f"Échec final de récupération des klines pour {symbol} après {retries} tentatives (erreur inattendue).")
                 return None
-    return None # Ne devrait pas être atteint, mais pour la clarté
+    return None
 
 def get_account_balance(asset='USDT'):
     """Récupère le solde disponible pour un actif spécifique."""
-    client = get_client()
-    if not client:
-        return 0.0
+    try:
+        client = _get_client_instance() # Utiliser le helper
+    except ConnectionError:
+        return 0.0 # Retourner 0.0 si le client n'est pas dispo
 
     try:
-        account_info = client.get_account()
-        balance = next((item for item in account_info['balances'] if item["asset"] == asset), None)
-        available_balance = float(balance['free']) if balance else 0.0
-        logging.info(f"Solde {asset} disponible récupéré : {available_balance}")
-        return available_balance
+        # Utiliser get_asset_balance est plus direct
+        balance = client.get_asset_balance(asset=asset)
+        if balance and 'free' in balance:
+            available_balance = float(balance['free'])
+            logging.info(f"Solde {asset} disponible récupéré : {available_balance}")
+            return available_balance
+        else:
+            logging.warning(f"Impossible de récupérer le solde 'free' pour {asset}. Réponse: {balance}")
+            return 0.0 # Retourner 0.0 si la structure de réponse est inattendue
     except (BinanceAPIException, BinanceRequestException) as e:
         logging.error(f"Erreur API Binance lors de la récupération du solde {asset} : {e}")
         return 0.0
@@ -113,9 +117,11 @@ def get_account_balance(asset='USDT'):
 
 def get_symbol_info(symbol):
     """Récupère les informations et règles de trading pour un symbole."""
-    client = get_client()
-    if not client:
+    try:
+        client = _get_client_instance() # Utiliser le helper
+    except ConnectionError:
         return None
+
     try:
         info = client.get_symbol_info(symbol)
         if info:
@@ -131,80 +137,75 @@ def get_symbol_info(symbol):
         logging.error(f"Erreur inattendue lors de la récupération des infos pour {symbol} : {e}")
         return None
 
-# --- Fonctions de passage d'ordres (à affiner/compléter) ---
-# Ces fonctions pourraient être déplacées/combinées avec celles esquissées dans strategy.py
-
 def place_order(symbol, side, quantity, order_type='MARKET', price=None, stop_loss_price=None, take_profit_price=None):
     """
     Place un ordre sur Binance avec gestion d'erreur.
-
-    Args:
-        symbol (str): Le symbole (ex: 'BTCUSDT').
-        side (str): 'BUY' ou 'SELL'.
-        quantity (float): La quantité à acheter/vendre (déjà formatée selon les règles du symbole).
-        order_type (str): Le type d'ordre ('MARKET', 'LIMIT', etc.).
-        price (float, optional): Le prix pour les ordres LIMIT.
-        stop_loss_price (float, optional): Le prix du stop-loss (pour les ordres OCO).
-        take_profit_price (float, optional): Le prix du take-profit (pour les ordres OCO).
-
-    Returns:
-        dict: Les informations de l'ordre si succès, None sinon.
     """
-    client = get_client()
-    if not client:
+    try:
+        client = _get_client_instance() # Utiliser le helper
+    except ConnectionError:
         return None
 
     try:
         logging.info(f"Tentative de placement d'un ordre {order_type} {side} de {quantity} {symbol.replace('USDT', '')}...")
 
-        if order_type == 'MARKET':
-            order = client.create_order(
-                symbol=symbol,
-                side=side,
-                type=order_type,
-                quantity=quantity
-            )
-        elif order_type == 'LIMIT' and price is not None:
-            order = client.create_order(
-                symbol=symbol,
-                side=side,
-                type=order_type,
-                quantity=quantity,
-                price=price
-            )
-        # elif order_type == 'OCO' and price is not None and stop_loss_price is not None and take_profit_price is not None:
-        #     # Gérer les ordres OCO (One-Cancels-the-Other) - Plus complexe, nécessite des validations
-        #     # et une gestion précise des prix.  À implémenter avec soin.
-        #     # Exemple (à adapter) :
-        #     # order = client.create_oco_order(
-        #     #     symbol=symbol,
-        #     #     side=side,
-        #     #     quantity=quantity,
-        #     #     price=price, # Prix limite
-        #     #     stopPrice=stop_loss_price, # Prix de déclenchement du stop
-        #     #     stopLimitPrice=stop_loss_price, # Prix limite du stop
-        #     #     stopLimitTimeInForce='GTC'
-        #     # )
-        #     logging.warning("Les ordres OCO ne sont pas encore implémentés.")
-        #     return None # Pour l'instant, ne pas utiliser OCO
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'type': order_type,
+            'quantity': quantity,
+        }
+
+        if order_type == 'LIMIT':
+            if price is None:
+                logging.error("Le prix est requis pour un ordre LIMIT.")
+                return None
+            params['price'] = f"{price:.8f}" # Assurer formatage correct
+            params['timeInForce'] = 'GTC'
+        elif order_type == 'MARKET':
+            pass # Pas de paramètres supplémentaires requis
+        # Ajouter d'autres types d'ordres ici si besoin (STOP_LOSS_LIMIT, OCO, etc.)
         else:
-            logging.error(f"Type d'ordre non supporté ou paramètres manquants pour {order_type}.")
+            logging.error(f"Type d'ordre '{order_type}' non supporté ou logique manquante.")
             return None
 
+        order = client.create_order(**params)
         logging.info(f"Ordre {order_type} {side} placé avec succès pour {quantity} {symbol.replace('USDT', '')}. OrderId: {order.get('orderId')}")
         return order
 
     except (BinanceAPIException, BinanceRequestException) as e:
-        logging.error(f"Erreur API Binance lors du placement de l'ordre {order_type} {side} pour {symbol} : {e}")
+        logging.error(f"Erreur API/Request Binance lors du placement de l'ordre {order_type} {side} pour {symbol} : {e}")
         return None
     except Exception as e:
-        logging.error(f"Erreur inattendue lors du placement de l'ordre {order_type} {side} pour {symbol} : {e}")
+        logging.exception(f"Erreur inattendue lors du placement de l'ordre {order_type} {side} pour {symbol}")
         return None
 
 def place_market_order(symbol, side, quantity):
     """Place un ordre au marché simple."""
-    # Utiliser la fonction place_order avec le type d'ordre MARKET
     return place_order(symbol, side, quantity, order_type='MARKET')
+
+# --- AJOUT DE LA FONCTION MANQUANTE ---
+def get_current_price(symbol):
+    """Récupère le dernier prix pour un symbole."""
+    try:
+        client = _get_client_instance() # Utiliser le helper
+    except ConnectionError:
+        return None
+
+    try:
+        ticker = client.get_symbol_ticker(symbol=symbol)
+        if ticker and 'price' in ticker:
+            return float(ticker['price'])
+        else:
+            logging.warning(f"Réponse invalide du ticker pour {symbol}: {ticker}")
+            return None
+    except (BinanceAPIException, BinanceRequestException) as e:
+        logging.error(f"Erreur API/Request Binance lors de la récupération du prix pour {symbol}: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Erreur inattendue lors de la récupération du prix pour {symbol}: {e}")
+        return None
+# --- FIN AJOUT ---
 
 
 # --- Autres fonctions utiles (get_open_orders, cancel_order, etc.) ---
@@ -218,11 +219,8 @@ if __name__ == '__main__':
     if client_instance:
         print("\n--- Test get_klines ---")
         klines = get_klines('BTCUSDT', Client.KLINE_INTERVAL_1MINUTE, limit=5)
-        if klines:
-            print(f"Récupéré {len(klines)} klines pour BTCUSDT 1m.")
-            # print(klines[-1]) # Afficher la dernière kline
-        else:
-            print("Échec de la récupération des klines.")
+        if klines: print(f"Récupéré {len(klines)} klines pour BTCUSDT 1m.")
+        else: print("Échec de la récupération des klines.")
 
         print("\n--- Test get_account_balance ---")
         balance = get_account_balance('USDT')
@@ -233,12 +231,14 @@ if __name__ == '__main__':
         if info:
             print(f"Filtres pour BTCUSDT récupérés (exemple: LOT_SIZE):")
             lot_size_filter = next((f for f in info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-            if lot_size_filter:
-                print(f"  minQty: {lot_size_filter.get('minQty')}, maxQty: {lot_size_filter.get('maxQty')}, stepSize: {lot_size_filter.get('stepSize')}")
-            else:
-                print("  Filtre LOT_SIZE non trouvé.")
-        else:
-            print("Échec de la récupération des infos symbole.")
+            if lot_size_filter: print(f"  minQty: {lot_size_filter.get('minQty')}, maxQty: {lot_size_filter.get('maxQty')}, stepSize: {lot_size_filter.get('stepSize')}")
+            else: print("  Filtre LOT_SIZE non trouvé.")
+        else: print("Échec de la récupération des infos symbole.")
+
+        print("\n--- Test get_current_price ---")
+        price = get_current_price('BTCUSDT')
+        if price: print(f"Prix actuel BTCUSDT: {price}")
+        else: print("Échec de la récupération du prix actuel.")
 
         # --- ATTENTION : Le test suivant place un ordre réel si les clés sont valides ! ---
         # print("\n--- Test place_market_order (ATTENTION : ORDRE RÉEL SI CLÉS VALIDES) ---")
@@ -262,3 +262,4 @@ if __name__ == '__main__':
         #      print(f"Impossible de vérifier les règles pour {test_symbol}, ordre non placé.")
     else:
         print("Impossible d'initialiser le client Binance.")
+
