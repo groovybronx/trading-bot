@@ -1,8 +1,10 @@
 import pandas as pd
 import pandas_ta as ta
+import numpy as np
 import logging
 from decimal import Decimal, ROUND_DOWN, InvalidOperation # Pour le formatage précis et la gestion d'erreur
 import binance_client_wrapper # Import the wrapper
+
 
 # Importer la configuration (pour les périodes, niveaux RSI, etc.)
 try:
