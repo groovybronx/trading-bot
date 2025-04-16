@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Trading Bot Dashboard</h1>
+    </header>
+
+    <main>
+        <section id="bot-status">
+            <h2>Statut du Bot</h2>
+            <p>État : <span id="status-value">Inconnu</span></p>
+            <p>Symbole : <span id="symbol-value">N/A</span></p>
+            <p>Timeframe : <span id="timeframe-value">N/A</span></p>
+            <p>Position Actuelle : <span id="position-value">Aucune</span></p>
+        </section>
+
+        <section id="logs">
+            <h2>Logs</h2>
+            <pre id="log-output">En attente des logs du backend...</pre>
+        </section>
+
+        <section id="controls">
+            <h2>Contrôles</h2>
+            <button id="start-bot-btn">Démarrer le Bot</button>
+            <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
+        </section>
+
+        <!-- D'autres sections pourraient être ajoutées : performance, trades récents, graphiques, etc. -->
+
+    </main>
+
+    <footer>
+        <p>&copy; 2025 Votre Bot de Trading</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
