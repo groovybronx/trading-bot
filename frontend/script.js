@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
         RSI_OVERBOUGHT: document.getElementById('param-rsi-ob'),
         RSI_OVERSOLD: document.getElementById('param-rsi-os'),
         RISK_PER_TRADE: document.getElementById('param-risk'),
+        CAPITAL_ALLOCATION: document.getElementById('param-capital-allocation'),
         VOLUME_AVG_PERIOD: document.getElementById('param-volume-avg'),
         USE_EMA_FILTER: document.getElementById('param-use-ema-filter'),
         USE_VOLUME_CONFIRMATION: document.getElementById('param-use-volume'),
@@ -224,10 +225,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (const key in paramInputs) {
                     if (data.hasOwnProperty(key) && paramInputs[key]) {
                         const inputElement = paramInputs[key];
-                        if (inputElement.type === 'checkbox') { inputElement.checked = data[key]; }
-                        else if (inputElement.name === 'RISK_PER_TRADE') { inputElement.value = (data[key] * 100).toFixed(1); }
-                        else { inputElement.value = data[key]; }
-                    } else if (paramInputs[key]) { console.warn(`Clé paramètre "${key}" non trouvée dans les données backend.`); }
+                        if (inputElement.type === 'checkbox') {
+                            inputElement.checked = data[key];
+                        } else if (inputElement.name === 'RISK_PER_TRADE') {
+                            // Convertir ratio risque (0-1) en % (0-100)
+                            inputElement.value = (data[key] * 100).toFixed(1);
+                        }
+                        // AJOUTER LA LOGIQUE POUR CAPITAL_ALLOCATION
+                        else if (inputElement.name === 'CAPITAL_ALLOCATION') {
+                            // Convertir ratio allocation (0-1) en % (0-100)
+                            inputElement.value = (data[key] * 100).toFixed(0); // Afficher en entier %
+                        }
+                        // FIN AJOUT
+                         else {
+                            // Fonctionne pour <input type="number"> et <select>
+                            inputElement.value = data[key];
+                        }
+                    } else if (paramInputs[key]) {
+                        console.warn(`Clé paramètre "${key}" non trouvée dans les données backend.`);
+                    }
                 }
                 addLogFromJS("Paramètres chargés.");
                 startBtn.disabled = false; stopBtn.disabled = false;
@@ -328,6 +344,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         isValid = false; break;
                     }
                     if (inputElement.name === 'RISK_PER_TRADE') { newParams[key] = value / 100.0; }
+                    else if (inputElement.name === 'CAPITAL_ALLOCATION') {
+                        // Convertir % (0-100) en ratio (0-1) pour le backend
+                        newParams[key] = value / 100.0;
+                    }
                     else { newParams[key] = value; }
                 } else if (inputElement.tagName === 'SELECT') { newParams[key] = inputElement.value; }
                 else { newParams[key] = inputElement.value; }

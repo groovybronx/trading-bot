@@ -239,7 +239,7 @@ if __name__ == '__main__':
     client_instance = get_client()
     if client_instance:
         print("\n--- Test get_klines ---")
-        klines = get_klines('BTCUSDT', Client.KLINE_INTERVAL_1MINUTE, limit=5)
+        klines = get_klines('BTCUSDT', Client.KLINE_INTERVAL_1MINUTE, limit=20)
         if klines:
             print(f"Récupéré {len(klines)} klines pour BTCUSDT 1m.")
         else:
