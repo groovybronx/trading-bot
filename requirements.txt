@@ -1,0 +1,7 @@
+Flask==3.1.0
+flask-cors==5.0.1
+python-binance==1.0.28
+pandas==2.2.3
+numpy==2.2.4
+pandas-ta==0.3.14b0
+python-dotenv==1.1.0

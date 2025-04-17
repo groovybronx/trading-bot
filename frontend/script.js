@@ -44,36 +44,35 @@ document.addEventListener('DOMContentLoaded', () => {
     stopBtn.disabled = true;
 
     // --- Communication avec le Backend ---
-    const API_BASE_URL = 'http://127.0.0.1:5000';
+    const API_BASE_URL = 'http://127.0.0.1:5000'; // CORRECT
 
     // --- Connexion au flux de logs SSE ---
     let evtSource = null; // Garder une référence pour pouvoir fermer
     function connectLogStream() {
-        // Fermer une connexion existante si elle existe
         if (evtSource) {
             evtSource.close();
             console.log("Ancienne connexion SSE fermée.");
         }
-
-        addLogDirect("Tentative de connexion au flux de logs..."); // Log direct sans timestamp
-        evtSource = new EventSource(`${API_BASE_URL}/stream_logs`);
+        addLogDirect("Tentative de connexion au flux de logs...");
+        evtSource = new EventSource(`${API_BASE_URL}/stream_logs`); // CORRECT
 
         evtSource.onopen = function() {
             console.log("Connexion SSE ouverte.");
+            // Optionnel: Logguer la réussite de la connexion dans l'UI
+            // addLogDirect("Connecté au flux de logs du backend.");
         };
-
         evtSource.onmessage = function(event) {
             addLogDirect(event.data);
         };
-
         evtSource.onerror = function(err) {
             console.error("Erreur EventSource:", err);
-            addLogDirect("!!! Erreur de connexion au flux de logs. Reconnexion auto...");
+            addLogDirect("!!! Erreur de connexion au flux de logs. Vérifiez que le backend est lancé. Reconnexion auto...");
+            // Optionnel: Fermer explicitement pour éviter les tentatives de reconnexion si le serveur est vraiment down
+            // if (evtSource) evtSource.close();
         };
     }
     // --- FIN SSE ---
 
-    // Fonction pour ajouter un log directement (sans timestamp JS)
     function addLogDirect(message) {
         if (logOutput) {
             logOutput.textContent += `\n${message}`;
@@ -83,18 +82,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Fonction pour ajouter un log depuis le JS (AVEC timestamp JS)
     function addLogFromJS(message) {
         const timestamp = new Date().toLocaleTimeString();
-        addLogDirect(`[${timestamp}] (FRONTEND) ${message}`); // Préfixer pour distinguer
+        addLogDirect(`[${timestamp}] (FRONTEND) ${message}`);
     }
 
-    // --- AJOUT: Fonctions pour l'historique des ordres ---
+    // --- Fonctions pour l'historique des ordres ---
     function fetchOrderHistory() {
-        fetch(`${API_BASE_URL}/order_history`)
+        fetch(`${API_BASE_URL}/order_history`) // CORRECT
             .then(response => {
                 if (!response.ok) {
-                    // Essayer de lire le corps pour plus de détails sur l'erreur
                     return response.text().then(text => {
                         throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
                     });
@@ -107,7 +104,6 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(error => {
                 console.error('Erreur de récupération de l\'historique des ordres:', error);
                 addLogFromJS(`Erreur historique ordres: ${error.message}`);
-                // Afficher une erreur dans la table
                 if (orderHistoryBody) {
                      orderHistoryBody.innerHTML = `<tr><td colspan="9" style="color: red;">Erreur chargement historique: ${error.message}</td></tr>`;
                 }
@@ -115,63 +111,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateOrderHistoryUI(orders) {
-        if (!orderHistoryBody) return; // Quitter si l'élément n'existe pas
-
-        // Vider le contenu actuel
+        if (!orderHistoryBody) return;
         orderHistoryBody.innerHTML = '';
 
         if (!orders || orders.length === 0) {
-            // Réinsérer le placeholder s'il existe et qu'il n'y a pas d'ordres
-             if (orderHistoryPlaceholder) {
-                 // Cloner le placeholder pour éviter les problèmes si on le réutilise
-                 // Vérifier si le placeholder existe avant de cloner
-                 const placeholderElement = document.getElementById('order-history-placeholder');
-                 if (placeholderElement) {
+             const placeholderElement = document.getElementById('order-history-placeholder');
+             if (placeholderElement) {
+                // S'assurer que le placeholder est bien un TR pour être valide dans TBODY
+                if (placeholderElement.tagName === 'TR') {
                     orderHistoryBody.appendChild(placeholderElement.cloneNode(true));
-                 } else { // Fallback si l'ID a changé ou est manquant
+                } else { // Si le placeholder n'est pas un TR, insérer un TR par défaut
                      orderHistoryBody.innerHTML = '<tr><td colspan="9">Aucun ordre dans l\'historique de cette session.</td></tr>';
-                 }
-             } else { // Fallback si la variable orderHistoryPlaceholder est null
+                }
+             } else {
                  orderHistoryBody.innerHTML = '<tr><td colspan="9">Aucun ordre dans l\'historique de cette session.</td></tr>';
              }
             return;
         }
 
-        // Afficher les ordres (du plus récent au plus ancien)
         orders.slice().reverse().forEach(order => {
             const row = document.createElement('tr');
-
-            // Formater le timestamp (en millisecondes depuis l'API)
             const timestamp = order.timestamp ? new Date(order.timestamp).toLocaleString() : 'N/A';
-
-            // Déterminer la valeur à afficher pour Prix/Valeur
             let priceOrValue = 'N/A';
             const executedQtyNum = parseFloat(order.executedQty);
             const cummulativeQuoteQtyNum = parseFloat(order.cummulativeQuoteQty);
 
             if (order.type === 'MARKET' && !isNaN(cummulativeQuoteQtyNum) && !isNaN(executedQtyNum) && executedQtyNum > 0) {
-                // Pour MARKET, afficher la valeur totale et calculer un prix moyen approx.
                 const avgPrice = cummulativeQuoteQtyNum / executedQtyNum;
                 priceOrValue = `${cummulativeQuoteQtyNum.toFixed(2)} (${avgPrice.toFixed(4)} avg)`;
             } else if (order.price) {
-                // Pour LIMIT, afficher le prix limite
-                try {
-                    priceOrValue = parseFloat(order.price).toFixed(4);
-                } catch (e) { priceOrValue = order.price; } // Afficher tel quel si non numérique
+                try { priceOrValue = parseFloat(order.price).toFixed(4); }
+                catch (e) { priceOrValue = order.price; }
             }
 
-            // Ajouter une classe CSS basée sur le statut (optionnel)
-            row.className = `status-${(order.status || 'unknown').toLowerCase()}`; // Utiliser className
-
-            // Formater les quantités
+            row.className = `status-${(order.status || 'unknown').toLowerCase()}`;
             const origQtyStr = order.origQty ? parseFloat(order.origQty).toFixed(6) : 'N/A';
             const executedQtyStr = order.executedQty ? parseFloat(order.executedQty).toFixed(6) : 'N/A';
-
 
             row.innerHTML = `
                 <td>${timestamp}</td>
                 <td>${order.symbol || 'N/A'}</td>
-                <td>${order.side || 'N/A'}</td>
+                <td class="${order.side?.toLowerCase()}">${order.side || 'N/A'}</td>
                 <td>${order.type || 'N/A'}</td>
                 <td>${origQtyStr}</td>
                 <td>${executedQtyStr}</td>
@@ -182,11 +162,10 @@ document.addEventListener('DOMContentLoaded', () => {
             orderHistoryBody.appendChild(row);
         });
     }
-    // --- FIN AJOUT HISTORIQUE ---
-
+    // --- FIN HISTORIQUE ---
 
     function fetchBotStatus() {
-        fetch(`${API_BASE_URL}/status`)
+        fetch(`${API_BASE_URL}/status`) // CORRECT
         .then(response => {
              if (!response.ok) {
                  return response.text().then(text => { throw new Error(`HTTP ${response.status}: ${text || response.statusText}`); });
@@ -199,23 +178,13 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(error => {
             console.error('Erreur de récupération du statut:', error);
             addLogFromJS(`Erreur connexion statut: ${error.message}`);
-            statusValue.textContent = 'Erreur Connexion'; statusValue.style.color = 'orange';
-            if (symbolValue) symbolValue.textContent = 'N/A';
-            if (timeframeValue) timeframeValue.textContent = 'N/A';
-            if (balanceValue) balanceValue.textContent = 'N/A';
-            if (quoteAssetLabel) quoteAssetLabel.textContent = 'USDT';
-            if (quantityValue) quantityValue.textContent = 'N/A';
-            if (baseAssetLabel) baseAssetLabel.textContent = 'N/A';
-            if (priceValue) priceValue.textContent = 'N/A';
-            if (symbolPriceLabel) symbolPriceLabel.textContent = 'N/A';
-            if (positionValue) positionValue.textContent = 'N/A';
-            startBtn.disabled = true; stopBtn.disabled = true;
+            updateStatusUI({ status: 'Erreur Connexion' }); // Mettre à jour l'UI avec l'erreur
         });
     }
 
     function fetchParameters() {
         addLogFromJS("Chargement des paramètres...");
-        fetch(`${API_BASE_URL}/parameters`)
+        fetch(`${API_BASE_URL}/parameters`) // CORRECT
             .then(response => {
                 if (!response.ok) { throw new Error(`HTTP ${response.status}: ${response.statusText}`); }
                 return response.json();
@@ -225,44 +194,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (const key in paramInputs) {
                     if (data.hasOwnProperty(key) && paramInputs[key]) {
                         const inputElement = paramInputs[key];
-                        if (inputElement.type === 'checkbox') {
-                            inputElement.checked = data[key];
-                        } else if (inputElement.name === 'RISK_PER_TRADE') {
-                            // Convertir ratio risque (0-1) en % (0-100)
-                            inputElement.value = (data[key] * 100).toFixed(1);
-                        }
-                        // AJOUTER LA LOGIQUE POUR CAPITAL_ALLOCATION
-                        else if (inputElement.name === 'CAPITAL_ALLOCATION') {
-                            // Convertir ratio allocation (0-1) en % (0-100)
-                            inputElement.value = (data[key] * 100).toFixed(0); // Afficher en entier %
-                        }
-                        // FIN AJOUT
-                         else {
-                            // Fonctionne pour <input type="number"> et <select>
-                            inputElement.value = data[key];
-                        }
-                    } else if (paramInputs[key]) {
-                        console.warn(`Clé paramètre "${key}" non trouvée dans les données backend.`);
-                    }
+                        if (inputElement.type === 'checkbox') { inputElement.checked = data[key]; }
+                        else if (inputElement.name === 'RISK_PER_TRADE') { inputElement.value = (data[key] * 100).toFixed(1); }
+                        else if (inputElement.name === 'CAPITAL_ALLOCATION') { inputElement.value = (data[key] * 100).toFixed(0); }
+                        else { inputElement.value = data[key]; }
+                    } else if (paramInputs[key]) { console.warn(`Clé paramètre "${key}" non trouvée dans les données backend.`); }
                 }
                 addLogFromJS("Paramètres chargés.");
-                startBtn.disabled = false; stopBtn.disabled = false;
-                fetchBotStatus();
+                // Activer les boutons seulement si le statut n'est pas en cours d'exécution
+                fetchBotStatus(); // Récupérer le statut actuel pour décider de l'état des boutons
             })
             .catch(error => {
                 console.error('Erreur de récupération des paramètres:', error);
                 addLogFromJS(`Erreur chargement paramètres: ${error.message}`);
                 paramSaveStatus.textContent = "Erreur chargement paramètres."; paramSaveStatus.style.color = 'red';
-                startBtn.disabled = true; stopBtn.disabled = true;
+                startBtn.disabled = true; stopBtn.disabled = true; // Garder désactivé si erreur
             });
     }
 
-
     function updateStatusUI(data) {
-        statusValue.textContent = data.status || 'Inconnu';
+        const status = data.status || 'Inconnu';
+        statusValue.textContent = status;
         symbolValue.textContent = data.symbol || 'N/A';
         timeframeValue.textContent = data.timeframe || 'N/A';
         positionValue.textContent = data.in_position ? 'Oui' : 'Non';
+        positionValue.className = data.in_position ? 'in-position-yes' : 'in-position-no'; // Classe pour style
 
         if (quoteAssetLabel) { quoteAssetLabel.textContent = data.quote_asset || 'USDT'; }
         if (balanceValue) {
@@ -280,52 +236,99 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? parseFloat(data.current_price).toFixed(4) : 'N/A';
         }
 
-        if (data.status === 'En cours') { statusValue.style.color = 'green'; startBtn.disabled = true; stopBtn.disabled = false; }
-        else if (data.status === 'Arrêté') { statusValue.style.color = 'red'; startBtn.disabled = false; stopBtn.disabled = true; }
-        else { statusValue.style.color = 'orange'; startBtn.disabled = true; stopBtn.disabled = true; }
+        // Gestion état boutons et couleur statut
+        if (status === 'En cours') {
+            statusValue.style.color = 'green';
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        } else if (status === 'Arrêté') {
+            statusValue.style.color = 'red';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        } else { // Inclut 'Erreur Connexion', 'Démarrage...', 'Arrêt...', etc.
+            statusValue.style.color = 'orange';
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+        }
     }
 
     // --- Gestion des Contrôles (Start/Stop) ---
     startBtn.addEventListener('click', () => {
-        console.log("Clic sur Démarrer le Bot");
         addLogFromJS("Tentative de démarrage du bot...");
-        fetch(`${API_BASE_URL}/start`, { method: 'POST' })
-            .then(response => response.json().then(data => ({ ok: response.ok, data })))
-            .then(({ ok, data }) => {
-                const message = data.message || `Erreur serveur inconnue`;
-                if(ok && data.success) {
-                    statusValue.textContent = 'Démarrage...'; statusValue.style.color = 'orange';
-                    startBtn.disabled = true; stopBtn.disabled = true;
-                    fetchBotStatus();
-                    fetchOrderHistory(); // Rafraîchir l'historique au démarrage
-                } else if (!ok) {
-                     console.error("Erreur HTTP démarrage:", data); addLogFromJS(`Erreur HTTP démarrage: ${message}`);
-                } else { console.warn("Échec démarrage (logique backend):", data); }
+        startBtn.disabled = true; // Désactiver immédiatement
+        stopBtn.disabled = true;
+        statusValue.textContent = 'Démarrage...'; statusValue.style.color = 'orange';
+
+        fetch(`${API_BASE_URL}/start`, { method: 'POST' }) // CORRECT
+            .then(response => {
+                // Vérifier si la réponse est OK avant de parser le JSON
+                if (!response.ok) {
+                    // Essayer de lire le corps pour un message d'erreur plus précis
+                    return response.json().catch(() => null) // Essayer de parser, sinon retourner null
+                        .then(errorData => {
+                            const errorMsg = errorData?.message || `Erreur HTTP ${response.status}`;
+                            throw new Error(errorMsg); // Lancer une erreur avec le message
+                        });
+                }
+                return response.json(); // Si OK, parser le JSON
             })
-            .catch(error => { console.error('Erreur communication démarrage:', error); addLogFromJS(`Erreur communication démarrage: ${error.message}`); });
+            .then(data => {
+                if (data.success) {
+                    addLogFromJS(data.message || "Ordre de démarrage envoyé.");
+                    // Le statut sera mis à jour par le prochain fetchBotStatus
+                    fetchBotStatus();
+                    fetchOrderHistory(); // Rafraîchir l'historique
+                } else {
+                    // Le backend a retourné success: false
+                    addLogFromJS(`Échec démarrage: ${data.message || 'Raison inconnue'}`);
+                    console.warn("Échec démarrage (logique backend):", data);
+                    fetchBotStatus(); // Mettre à jour l'UI avec le statut actuel (probablement 'Arrêté' ou une erreur)
+                }
+            })
+            .catch(error => {
+                console.error('Erreur communication démarrage:', error);
+                addLogFromJS(`Erreur communication démarrage: ${error.message}`);
+                fetchBotStatus(); // Mettre à jour l'UI même en cas d'erreur de communication
+            });
     });
 
     stopBtn.addEventListener('click', () => {
-        console.log("Clic sur Arrêter le Bot");
         addLogFromJS("Tentative d'arrêt du bot...");
-        fetch(`${API_BASE_URL}/stop`, { method: 'POST' })
-             .then(response => response.json().then(data => ({ ok: response.ok, data })))
-            .then(({ ok, data }) => {
-                const message = data.message || `Erreur serveur inconnue`;
-                 if(ok && data.success) {
-                    statusValue.textContent = 'Arrêt...'; statusValue.style.color = 'orange';
-                    startBtn.disabled = true; stopBtn.disabled = true;
-                    fetchBotStatus();
-                } else if (!ok) {
-                     console.error("Erreur HTTP arrêt:", data); addLogFromJS(`Erreur HTTP arrêt: ${message}`);
-                } else { console.warn("Échec arrêt (logique backend):", data); }
+        startBtn.disabled = true; // Désactiver immédiatement
+        stopBtn.disabled = true;
+        statusValue.textContent = 'Arrêt...'; statusValue.style.color = 'orange';
+
+        fetch(`${API_BASE_URL}/stop`, { method: 'POST' }) // CORRECT
+             .then(response => {
+                if (!response.ok) {
+                    return response.json().catch(() => null)
+                        .then(errorData => {
+                            const errorMsg = errorData?.message || `Erreur HTTP ${response.status}`;
+                            throw new Error(errorMsg);
+                        });
+                }
+                return response.json();
             })
-            .catch(error => { console.error('Erreur communication arrêt:', error); addLogFromJS(`Erreur communication arrêt: ${error.message}`); });
+            .then(data => {
+                 if (data.success) {
+                    addLogFromJS(data.message || "Ordre d'arrêt envoyé.");
+                    // Le statut sera mis à jour par le prochain fetchBotStatus
+                    fetchBotStatus();
+                } else {
+                    addLogFromJS(`Échec arrêt: ${data.message || 'Raison inconnue'}`);
+                    console.warn("Échec arrêt (logique backend):", data);
+                    fetchBotStatus();
+                }
+            })
+            .catch(error => {
+                console.error('Erreur communication arrêt:', error);
+                addLogFromJS(`Erreur communication arrêt: ${error.message}`);
+                fetchBotStatus();
+            });
     });
 
     // --- Écouteur pour Sauvegarder les Paramètres ---
     saveParamsBtn.addEventListener('click', () => {
-        console.log("Clic sur Sauvegarder les Paramètres");
         addLogFromJS("Sauvegarde des paramètres en cours...");
         paramSaveStatus.textContent = "Sauvegarde..."; paramSaveStatus.style.color = "orange";
         saveParamsBtn.disabled = true;
@@ -335,43 +338,53 @@ document.addEventListener('DOMContentLoaded', () => {
         for (const key in paramInputs) {
             if (paramInputs[key]) {
                 const inputElement = paramInputs[key];
-                if (inputElement.type === 'checkbox') { newParams[key] = inputElement.checked; }
-                else if (inputElement.type === 'number') {
-                    const value = parseFloat(inputElement.value);
-                    if (isNaN(value)) {
-                        const label = document.querySelector(`label[for='${inputElement.id}']`);
-                        addLogFromJS(`Erreur: Valeur invalide pour ${label?.textContent || key}`);
-                        isValid = false; break;
+                try { // Ajouter un try/catch pour la conversion
+                    if (inputElement.type === 'checkbox') { newParams[key] = inputElement.checked; }
+                    else if (inputElement.type === 'number') {
+                        const value = parseFloat(inputElement.value);
+                        if (isNaN(value)) { throw new Error(`Valeur invalide pour ${key}`); }
+
+                        if (inputElement.name === 'RISK_PER_TRADE') { newParams[key] = value / 100.0; }
+                        else if (inputElement.name === 'CAPITAL_ALLOCATION') { newParams[key] = value / 100.0; }
+                        else { newParams[key] = value; }
                     }
-                    if (inputElement.name === 'RISK_PER_TRADE') { newParams[key] = value / 100.0; }
-                    else if (inputElement.name === 'CAPITAL_ALLOCATION') {
-                        // Convertir % (0-100) en ratio (0-1) pour le backend
-                        newParams[key] = value / 100.0;
-                    }
-                    else { newParams[key] = value; }
-                } else if (inputElement.tagName === 'SELECT') { newParams[key] = inputElement.value; }
-                else { newParams[key] = inputElement.value; }
+                    else if (inputElement.tagName === 'SELECT') { newParams[key] = inputElement.value; }
+                    else { newParams[key] = inputElement.value; } // Pour d'autres types éventuels
+                } catch (e) {
+                     const label = document.querySelector(`label[for='${inputElement.id}']`);
+                     addLogFromJS(`Erreur: ${e.message || 'Valeur invalide'} pour ${label?.textContent || key}`);
+                     isValid = false; break;
+                }
             }
         }
 
         if (!isValid) {
             paramSaveStatus.textContent = "Erreur de validation côté client."; paramSaveStatus.style.color = "red";
-            saveParamsBtn.disabled = false; return;
+            saveParamsBtn.disabled = false;
+            setTimeout(() => { paramSaveStatus.textContent = ""; }, 7000);
+            return;
         }
 
         console.log("Envoi des paramètres:", newParams);
-        fetch(`${API_BASE_URL}/parameters`, {
+        fetch(`${API_BASE_URL}/parameters`, { // CORRECT
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newParams),
         })
         .then(response => response.json().then(data => ({ ok: response.ok, status: response.status, data })))
         .then(({ ok, status, data }) => {
             const message = data.message || `Erreur HTTP ${status}`;
-            if (ok) {
+            if (ok && data.success) { // Vérifier aussi data.success
                 paramSaveStatus.textContent = "Paramètres sauvegardés !"; paramSaveStatus.style.color = "green";
-                if (message.includes("redémarrage")) { paramSaveStatus.textContent += " (Redémarrage conseillé)"; paramSaveStatus.style.color = "darkorange"; }
+                if (message.includes("redémarrage")) {
+                    paramSaveStatus.textContent += " (Redémarrage conseillé)";
+                    paramSaveStatus.style.color = "darkorange";
+                }
+                addLogFromJS("Paramètres sauvegardés avec succès.");
             } else {
+                // Erreur logique backend ou HTTP
+                const errorMsg = data.message || `Erreur serveur ${status}`;
                 console.error("Erreur sauvegarde paramètres (serveur):", data);
-                paramSaveStatus.textContent = `Erreur: ${message}`; paramSaveStatus.style.color = "red";
+                paramSaveStatus.textContent = `Erreur: ${errorMsg}`; paramSaveStatus.style.color = "red";
+                addLogFromJS(`Erreur sauvegarde paramètres: ${errorMsg}`);
             }
         })
         .catch(error => {
@@ -386,14 +399,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Initialisation ---
-    fetchParameters(); // Charger les paramètres en premier
+    fetchParameters(); // Charger les paramètres en premier (mettra à jour le statut et l'état des boutons)
     connectLogStream(); // Démarrer la connexion SSE pour les logs
-    // AJOUT: Appeler fetchOrderHistory initialement
-    fetchOrderHistory();
-    // MODIFICATION: Mettre à jour l'historique dans l'intervalle
+    fetchOrderHistory(); // Charger l'historique initial
+
+    // Intervalle pour rafraîchir statut et historique
     const statusInterval = setInterval(() => {
         fetchBotStatus();
-        fetchOrderHistory(); // Mettre à jour l'historique en même temps que le statut
+        fetchOrderHistory();
     }, 5000); // Intervalle de 5 secondes
 
      // Gérer la fermeture de la page/onglet pour fermer SSE
@@ -402,5 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
             evtSource.close();
             console.log("Flux de logs SSE fermé.");
         }
+        // Optionnel: Arrêter l'intervalle
+        // clearInterval(statusInterval);
     });
 });

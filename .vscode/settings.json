@@ -1,7 +1,13 @@
 {
-    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.defaultInterpreterPath": "/usr/local/bin/python3",
     "python.terminal.activateEnvironment": true,
     "python.analysis.extraPaths": [
         "./backend"
-    ]
+    ],
+    "terminal.integrated.automationProfile.osx": {
+        "path": "zsh",
+        "args": [
+            "-l"
+        ]
+    },
 }

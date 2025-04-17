@@ -1,3 +1,0 @@
-Flask==3.1.0
-flask-cors==5.0.1
-python-binance==1.0.22

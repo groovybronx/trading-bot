@@ -3,14 +3,17 @@
 # NE COMMETTEZ JAMAIS CE FICHIER DANS UN REPOSITORY GIT PUBLIC OU PRIVÉ SI VOS VRAIES CLÉS SONT ICI.
 # La méthode la plus sûre est d'utiliser des variables d'environnement.
 # Exemple :
+ 
+from dotenv import load_dotenv
+
 import os
-BINANCE_API_KEY = os.getenv('API_KEY', '3Zumf1xFdfiHXKuUgLufCfO6VU77DSHEGkSFTJonid3F0WUTVLlfBF5NY6M9GUNQ')
-BINANCE_API_SECRET = os.getenv('API_SECRET','zOTf6xuhYl0ZCSPXYoxydPAbpQCOLK8Cz6uWp4Os80E8Ilv5ryCtUj33NSFUXDkG')
+# Charger les variables d'environnement depuis un fichier .env
+load_dotenv()
+
+BINANCE_API_KEY= os.getenv('ENV_API_KEY')
+BINANCE_API_SECRET = os.getenv('ENV_API_SECRET')
 
 # --- Remplacer par vos vraies clés UNIQUEMENT pour un usage local et sécurisé ---
-# --- Ou mieux, commenter ces lignes et utiliser les variables d'environnement ---
-#BINANCE_API_KEY = "3Zumf1xFdfiHXKuUgLufCfO6VU77DSHEGkSFTJonid3F0WUTVLlfBF5NY6M9GUNQ"  # REMPLACEZ CECI ou  utilisez les variables d'environnement
-#BINANCE_API_SECRET = "zOTf6xuhYl0ZCSPXYoxydPAbpQCOLK8Cz6uWp4Os80E8Ilv5ryCtUj33NSFUXDkG" # REMPLACEZ CECI ou utilisez les variables d'environnement
 
 # --- Autres paramètres de configuration (peuvent être déplacés ici depuis bot.py) ---
 # SYMBOL = 'BTCUSDT'

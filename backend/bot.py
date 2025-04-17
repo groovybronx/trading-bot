@@ -7,6 +7,10 @@ from flask_cors import CORS
 from binance.client import Client as BinanceClient
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
+import time
+
+
+
 # Importer les modules locaux
 import config
 import strategy
@@ -411,6 +415,9 @@ if __name__ == "__main__":
     werkzeug_log.setLevel(logging.ERROR)
 
     logging.info("Démarrage de l'API Flask...") # Ce log ira au frontend
+
+
     # Utiliser debug=False et use_reloader=False pour éviter les problèmes avec les threads
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
 
