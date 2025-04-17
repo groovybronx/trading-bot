@@ -91,7 +91,7 @@ footer {
     font-size: 0.9em;
 }
 
-/* style.css */
+/* Paramètres */
 #parameters .param-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Responsive grid */
@@ -106,16 +106,23 @@ footer {
 }
 
 #parameters input[type="number"],
-#parameters input[type="checkbox"] {
+#parameters input[type="checkbox"],
+#parameters select { /* Ajout select pour le style */
     padding: 8px;
     margin-right: 5px;
     border: 1px solid #ccc;
     border-radius: 4px;
+    box-sizing: border-box; /* Pour inclure padding/border dans la largeur */
+    width: 100%; /* Prendre toute la largeur de la cellule grid */
 }
 
 #parameters .checkbox-group {
     display: flex;
     align-items: center;
+}
+#parameters .checkbox-group input[type="checkbox"] {
+    width: auto; /* Ne pas forcer la largeur pour les checkboxes */
+    margin-right: 8px;
 }
 #parameters .checkbox-group label {
     margin-bottom: 0; /* Annuler la marge pour l'alignement */
@@ -141,6 +148,7 @@ footer {
     font-style: italic;
 }
 
+/* Historique des Ordres */
 #order-history {
     background-color: #f9f9f9;
     padding: 15px;
@@ -200,12 +208,34 @@ footer {
     padding: 20px;
 }
 
-/* Optionnel: Styles pour les statuts */
+/* Styles pour la performance */
+.performance-positive {
+    color: green;
+    font-weight: bold;
+}
+
+.performance-negative {
+    color: red;
+    font-weight: bold;
+}
+
+/* Styles pour le côté (BUY/SELL) */
+td.buy {
+    color: green;
+    font-weight: bold;
+}
+td.sell {
+    color: red;
+    font-weight: bold;
+}
+
+/* Styles pour les statuts d'ordre */
 .status-filled {
     /* background-color: #e6ffed; */ /* Vert léger */
 }
 .status-canceled, .status-rejected, .status-expired {
      color: #999;
+     text-decoration: line-through; /* Barrer les ordres annulés/rejetés */
      /* background-color: #ffebeb; */ /* Rouge léger */
 }
 .status-new, .status-partially_filled {

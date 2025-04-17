@@ -4,12 +4,8 @@ import threading
 import queue  # Ajout pour la file d'attente
 from flask import Flask, jsonify, request, Response  # Ajout de Response
 from flask_cors import CORS
-from binance.client import Client as BinanceClient
+from binance.client import Client as BinanceClient # Assurez-vous que c'est importé
 from binance.exceptions import BinanceAPIException, BinanceRequestException
-
-import time
-
-
 
 # Importer les modules locaux
 import config
@@ -64,14 +60,20 @@ except AttributeError:
     API_KEY = "INVALID_KEY"
     API_SECRET = "INVALID_SECRET"
 SYMBOL = getattr(config, 'SYMBOL', 'BTCUSDT')
-VALID_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+
+# MODIFIER VALID_TIMEFRAMES: Ajouter '1s'
+VALID_TIMEFRAMES = ['1s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+
+# MODIFIER TIMEFRAME_CONSTANT_MAP: Ajouter le mapping pour '1s'
 TIMEFRAME_CONSTANT_MAP = {
+    '1s': 'KLINE_INTERVAL_1SECOND', # <-- AJOUTÉ
     '1m': 'KLINE_INTERVAL_1MINUTE', '3m': 'KLINE_INTERVAL_3MINUTE', '5m': 'KLINE_INTERVAL_5MINUTE',
     '15m': 'KLINE_INTERVAL_15MINUTE', '30m': 'KLINE_INTERVAL_30MINUTE', '1h': 'KLINE_INTERVAL_1HOUR',
     '2h': 'KLINE_INTERVAL_2HOUR', '4h': 'KLINE_INTERVAL_4HOUR', '6h': 'KLINE_INTERVAL_6HOUR',
     '8h': 'KLINE_INTERVAL_8HOUR', '12h': 'KLINE_INTERVAL_12HOUR', '1d': 'KLINE_INTERVAL_1DAY',
     '3d': 'KLINE_INTERVAL_3DAY', '1w': 'KLINE_INTERVAL_1WEEK', '1M': 'KLINE_INTERVAL_1MONTH',
 }
+
 config_lock = threading.Lock()
 bot_config = {
     "TIMEFRAME_STR": getattr(config, 'TIMEFRAME', '5m'), "RISK_PER_TRADE": getattr(config, 'RISK_PER_TRADE', 0.01),
@@ -87,16 +89,20 @@ def initialize_binance_client():
     initialized_client = binance_client_wrapper.get_client()
     if not initialized_client: logging.error("Impossible d'initialiser le client Binance via le wrapper."); client = None; return False
     else: client = initialized_client; logging.info("Client Binance initialisé avec succès via le wrapper."); return True
+
+# MODIFIER interval_to_seconds: Ajouter la condition pour 's'
 def interval_to_seconds(interval_str):
     try:
         unit = interval_str[-1].lower(); value = int(interval_str[:-1])
-        if unit == 'm': return value * 60
+        if unit == 's': return value * 1 # <-- AJOUTÉ
+        elif unit == 'm': return value * 60
         elif unit == 'h': return value * 60 * 60
         elif unit == 'd': return value * 60 * 60 * 24
         elif unit == 'w': return value * 60 * 60 * 24 * 7
         elif unit == 'M': return value * 60 * 60 * 24 * 30 # Approximation pour mois
         else: logging.warning(f"Intervalle non reconnu pour conversion secondes: {interval_str}"); return 0
     except (IndexError, ValueError, TypeError): logging.warning(f"Format d'intervalle invalide pour conversion secondes: {interval_str}"); return 0
+
 # --- État Global du Bot (Statut, Position, etc.) ---
 bot_state = {
     "status": "Arrêté",
@@ -110,8 +116,9 @@ bot_state = {
     "timeframe": bot_config["TIMEFRAME_STR"],
     "thread": None,
     "stop_requested": False,
-    "order_history": [],      # AJOUT: Historique des ordres de la session
-    "max_history_length": 100 # AJOUT: Limite de l'historique en mémoire
+    "entry_details": None, # Sera un dict: {'order_id': ..., 'avg_price': ..., 'quantity': ..., 'timestamp': ...}
+    "order_history": [],      # Historique des ordres de la session
+    "max_history_length": 100 # Limite de l'historique en mémoire
 }
 
 # --- Flask App ---
@@ -122,18 +129,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 @app.route('/status')
 def get_status():
     """Retourne le statut actuel du bot."""
-    # Utiliser le lock pour un accès sûr à bot_state
     with config_lock:
         status_data = {
             'status': bot_state['status'],
             'symbol': bot_state['symbol'],
             'timeframe': bot_state['timeframe'],
             'in_position': bot_state['in_position'],
-            'available_balance': bot_state['available_balance'], # Solde Quote Asset
+            'available_balance': bot_state['available_balance'],
             'current_price': bot_state['current_price'],
-            'symbol_quantity': bot_state['symbol_quantity'],     # Quantité Base Asset
-            'base_asset': bot_state['base_asset'],               # Nom Base Asset
-            'quote_asset': bot_state['quote_asset'],             # Nom Quote Asset
+            'symbol_quantity': bot_state['symbol_quantity'],
+            'base_asset': bot_state['base_asset'],
+            'quote_asset': bot_state['quote_asset'],
         }
     return jsonify(status_data)
 
@@ -147,15 +153,16 @@ def set_parameters():
     global bot_config
     new_params = request.json
     if not new_params: return jsonify({"success": False, "message": "Aucun paramètre fourni."}), 400
-    logging.info(f"Tentative de mise à jour des paramètres: {new_params}") # Ce log ira au frontend
+    logging.info(f"Tentative de mise à jour des paramètres: {new_params}")
     restart_recommended = False
     validated_params = {}
     try:
-        # ... (Validation des paramètres inchangée, avec les opérateurs < > corrects) ...
+        # Validation utilise maintenant VALID_TIMEFRAMES mis à jour
         new_timeframe = str(new_params.get("TIMEFRAME_STR", bot_config["TIMEFRAME_STR"]))
         if new_timeframe not in VALID_TIMEFRAMES: raise ValueError(f"TIMEFRAME_STR invalide.")
         validated_params["TIMEFRAME_STR"] = new_timeframe
         if new_timeframe != bot_config["TIMEFRAME_STR"]: restart_recommended = True
+
         validated_params["RISK_PER_TRADE"] = float(new_params.get("RISK_PER_TRADE", bot_config["RISK_PER_TRADE"]))
         if not (0 < validated_params["RISK_PER_TRADE"] < 1): raise ValueError("RISK_PER_TRADE doit être entre 0 et 1 (exclus)")
         validated_params["CAPITAL_ALLOCATION"] = float(new_params.get("CAPITAL_ALLOCATION", bot_config["CAPITAL_ALLOCATION"]))
@@ -179,9 +186,9 @@ def set_parameters():
         validated_params["USE_VOLUME_CONFIRMATION"] = bool(new_params.get("USE_VOLUME_CONFIRMATION", bot_config["USE_VOLUME_CONFIRMATION"]))
 
     except (ValueError, TypeError) as e:
-        logging.error(f"Erreur de validation des paramètres: {e}") # Ce log ira au frontend
+        logging.error(f"Erreur de validation des paramètres: {e}")
         return jsonify({"success": False, "message": f"Paramètres invalides: {e}"}), 400
-    with config_lock: bot_config.update(validated_params); logging.info(f"Paramètres mis à jour avec succès.") # Ce log ira au frontend
+    with config_lock: bot_config.update(validated_params); logging.info(f"Paramètres mis à jour avec succès.")
     # Mettre à jour les variables globales de la stratégie
     strategy.EMA_SHORT_PERIOD = bot_config["EMA_SHORT_PERIOD"]
     strategy.EMA_LONG_PERIOD = bot_config["EMA_LONG_PERIOD"]
@@ -201,9 +208,10 @@ def start_bot_route():
     global bot_state
     if bot_state["thread"] is not None and bot_state["thread"].is_alive(): return jsonify({"success": False, "message": "Le bot est déjà en cours."}), 400
     if not initialize_binance_client(): return jsonify({"success": False, "message": "Échec de l'initialisation du client Binance."}), 500
-    logging.info("Démarrage du bot demandé...") # Ce log ira au frontend
-    with config_lock: # Réinitialiser l'historique au démarrage
+    logging.info("Démarrage du bot demandé...")
+    with config_lock:
         bot_state["order_history"] = []
+        bot_state["entry_details"] = None
     bot_state["status"] = "Démarrage..."; bot_state["stop_requested"] = False
     bot_state["thread"] = threading.Thread(target=run_bot, daemon=True); bot_state["thread"].start()
     time.sleep(1); return jsonify({"success": True, "message": "Ordre de démarrage envoyé."})
@@ -212,14 +220,13 @@ def start_bot_route():
 def stop_bot_route():
     global bot_state
     if bot_state["thread"] is None or not bot_state["thread"].is_alive(): bot_state["status"] = "Arrêté"; return jsonify({"success": False, "message": "Le bot n'est pas en cours."}), 400
-    logging.info("Arrêt du bot demandé...") # Ce log ira au frontend
+    logging.info("Arrêt du bot demandé...")
     bot_state["status"] = "Arrêt..."; bot_state["stop_requested"] = True
     return jsonify({"success": True, "message": "Ordre d'arrêt envoyé."})
 
 # --- ROUTE POUR LE STREAMING DES LOGS ---
 @app.route('/stream_logs')
 def stream_logs():
-    # ... (inchangée) ...
     def generate():
         yield f"data: Connexion au flux de logs établie.\n\n"
         logging.info("Client connecté au flux de logs.")
@@ -238,16 +245,14 @@ def stream_logs():
             pass
     return Response(generate(), mimetype='text/event-stream')
 
-# --- NOUVELLE ROUTE POUR L'HISTORIQUE DES ORDRES ---
+# --- ROUTE POUR L'HISTORIQUE DES ORDRES ---
 @app.route('/order_history')
 def get_order_history():
     """Retourne l'historique des ordres de la session actuelle."""
-    # Retourner une copie pour éviter les modifications concurrentes pendant la sérialisation
-    with config_lock: # Utiliser le lock existant pour protéger l'accès à bot_state
-        # Créer une copie de la liste pour la sécurité des threads
+    with config_lock:
         history_copy = list(bot_state['order_history'])
     return jsonify(history_copy)
-# --- FIN NOUVELLE ROUTE ---
+# --- FIN ROUTE HISTORIQUE ---
 
 
 # --- Boucle Principale du Bot ---
@@ -289,7 +294,7 @@ def run_bot():
             local_rsi_period = current_config["RSI_PERIOD"]; use_ema_filter = current_config["USE_EMA_FILTER"]
             ema_filter_period = current_config["EMA_FILTER_PERIOD"]
 
-            # Obtenir la constante Binance pour le timeframe
+            # Obtenir la constante Binance pour le timeframe (utilise TIMEFRAME_CONSTANT_MAP mis à jour)
             binance_constant_name = TIMEFRAME_CONSTANT_MAP.get(local_timeframe_str)
             local_timeframe_interval = getattr(BinanceClient, binance_constant_name, None) if binance_constant_name else None
             if local_timeframe_interval is None:
@@ -334,59 +339,117 @@ def run_bot():
                 current_data = signals_df.iloc[-1]
 
                 # 3. Logique d'Entrée/Sortie
-                order_result = None # Initialiser le résultat de l'ordre
+                entry_order_result = None # Pour l'ordre d'achat
+                exit_order_result = None  # Pour l'ordre de vente
+                performance_pct = None    # Pour stocker la performance calculée
+
                 if not bot_state["in_position"]:
-                    # MODIFICATION: Récupérer le résultat de l'ordre depuis la stratégie
-                    order_result = strategy.check_entry_conditions(current_data, SYMBOL, local_risk_per_trade, local_capital_allocation, bot_state["available_balance"], symbol_info)
-                    if order_result: # Si un ordre a été placé avec succès
+                    entry_order_result = strategy.check_entry_conditions(current_data, SYMBOL, local_risk_per_trade, local_capital_allocation, bot_state["available_balance"], symbol_info)
+                    if entry_order_result: # Si un ordre d'achat a été placé avec succès
                         bot_state["in_position"] = True
-                        # Rafraîchir les deux soldes après une entrée réussie
+                        logging.info(f"Position OUVERTE pour {SYMBOL}.") # Frontend
+
+                        # --- Mémoriser les détails de l'entrée ---
+                        try:
+                            executed_qty = float(entry_order_result.get('executedQty', 0))
+                            cummulative_quote_qty = float(entry_order_result.get('cummulativeQuoteQty', 0))
+                            if executed_qty > 0:
+                                avg_entry_price = cummulative_quote_qty / executed_qty
+                                with config_lock:
+                                    bot_state["entry_details"] = {
+                                        "order_id": entry_order_result.get('orderId'),
+                                        "avg_price": avg_entry_price,
+                                        "quantity": executed_qty,
+                                        "timestamp": entry_order_result.get('transactTime', int(time.time() * 1000))
+                                    }
+                                logging.info(f"Détails d'entrée mémorisés: Prix={avg_entry_price:.4f}, Qté={executed_qty}") # Frontend
+                            else:
+                                logging.warning("Quantité exécutée nulle pour l'ordre d'entrée, impossible de mémoriser les détails.") # Frontend
+                                with config_lock: bot_state["entry_details"] = None
+                        except (ValueError, TypeError, ZeroDivisionError) as e:
+                            logging.error(f"Erreur lors du calcul/mémorisation des détails d'entrée: {e}") # Frontend
+                            with config_lock: bot_state["entry_details"] = None
+                        # --- FIN Mémorisation ---
+
+                        # Rafraîchir les soldes après l'entrée
                         refreshed_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
                         if refreshed_quote_balance is not None: bot_state["available_balance"] = refreshed_quote_balance
                         refreshed_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
                         if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
-                else:
-                    # Placeholder pour la sortie - devra aussi retourner order_result si un ordre SELL est placé
-                    # order_result = strategy.check_exit_conditions(...)
-                    # if order_result:
-                    #    bot_state["in_position"] = False
-                    #    # Rafraîchir les soldes
-                    #    ...
-                    pass
 
-                # AJOUT: Enregistrer l'ordre dans l'historique si succès
-                if order_result:
+                elif bot_state["in_position"]:
+                    exit_order_result = strategy.check_exit_conditions(current_data, SYMBOL, bot_state["symbol_quantity"], symbol_info)
+                    if exit_order_result: # Si un ordre de vente a été placé avec succès
+                        bot_state["in_position"] = False
+                        logging.info(f"Position FERMÉE pour {SYMBOL}.") # Frontend
+
+                        # --- Calculer la performance ---
+                        with config_lock:
+                            entry_details_copy = bot_state["entry_details"]
+
+                        if entry_details_copy:
+                            try:
+                                exit_executed_qty = float(exit_order_result.get('executedQty', 0))
+                                exit_cummulative_quote_qty = float(exit_order_result.get('cummulativeQuoteQty', 0))
+                                entry_price = entry_details_copy.get('avg_price')
+
+                                if exit_executed_qty > 0 and entry_price is not None and entry_price > 0:
+                                    avg_exit_price = exit_cummulative_quote_qty / exit_executed_qty
+                                    performance_pct = ((avg_exit_price / entry_price) - 1) * 100
+                                    logging.info(f"Performance calculée: {performance_pct:.2f}% (Entrée: {entry_price:.4f}, Sortie: {avg_exit_price:.4f})") # Frontend
+                                else:
+                                    logging.warning("Impossible de calculer la performance (données manquantes ou invalides).") # Frontend
+                            except (ValueError, TypeError, ZeroDivisionError) as e:
+                                logging.error(f"Erreur lors du calcul de la performance: {e}") # Frontend
+                        else:
+                            logging.warning("Détails d'entrée non trouvés pour calculer la performance.") # Frontend
+
+                        # Réinitialiser les détails d'entrée
+                        with config_lock: bot_state["entry_details"] = None
+                        # --- FIN Calcul Performance ---
+
+                        # Rafraîchir les soldes après la sortie
+                        refreshed_quote_balance = binance_client_wrapper.get_account_balance(asset=bot_state['quote_asset'])
+                        if refreshed_quote_balance is not None: bot_state["available_balance"] = refreshed_quote_balance
+                        refreshed_base_quantity = binance_client_wrapper.get_account_balance(asset=bot_state['base_asset'])
+                        if refreshed_base_quantity is not None: bot_state["symbol_quantity"] = refreshed_base_quantity
+
+
+                # --- Enregistrer l'ordre dans l'historique ---
+                order_to_log = entry_order_result if entry_order_result else exit_order_result
+                if order_to_log:
                     try:
-                        # Simplifier l'objet ordre avant de le stocker
                         simplified_order = {
-                            # Utiliser transactTime (ms) ou fallback sur temps actuel (ms)
-                            "timestamp": order_result.get('transactTime', int(time.time() * 1000)),
-                            "orderId": order_result.get('orderId'),
-                            "symbol": order_result.get('symbol'),
-                            "side": order_result.get('side'),
-                            "type": order_result.get('type'),
-                            "origQty": order_result.get('origQty'),
-                            "executedQty": order_result.get('executedQty'),
-                            "cummulativeQuoteQty": order_result.get('cummulativeQuoteQty'), # Valeur totale (pour MARKET)
-                            "price": order_result.get('price'), # Prix limite (pour LIMIT)
-                            "status": order_result.get('status')
+                            "timestamp": order_to_log.get('transactTime', int(time.time() * 1000)),
+                            "orderId": order_to_log.get('orderId'),
+                            "symbol": order_to_log.get('symbol'),
+                            "side": order_to_log.get('side'),
+                            "type": order_to_log.get('type'),
+                            "origQty": order_to_log.get('origQty'),
+                            "executedQty": order_to_log.get('executedQty'),
+                            "cummulativeQuoteQty": order_to_log.get('cummulativeQuoteQty'),
+                            "price": order_to_log.get('price'),
+                            "status": order_to_log.get('status'),
+                            "performance_pct": performance_pct if order_to_log == exit_order_result else None
                         }
-                        with config_lock: # Protéger l'accès à l'historique
+                        with config_lock:
                             bot_state['order_history'].append(simplified_order)
-                            # Limiter la taille de l'historique
                             current_history_len = len(bot_state['order_history'])
                             max_len = bot_state['max_history_length']
                             if current_history_len > max_len:
-                                # Garder les N derniers éléments
                                 bot_state['order_history'] = bot_state['order_history'][-max_len:]
-                        logging.info(f"Ordre {simplified_order.get('orderId', 'N/A')} ajouté à l'historique.") # Frontend
+                        logging.info(f"Ordre {simplified_order.get('orderId', 'N/A')} ({simplified_order['side']}) ajouté à l'historique.") # Frontend
+                        if simplified_order['performance_pct'] is not None:
+                             logging.info(f"  Performance enregistrée: {simplified_order['performance_pct']:.2f}%") # Frontend
+
                     except Exception as hist_err:
                         logging.error(f"Erreur lors de l'ajout de l'ordre à l'historique: {hist_err}") # Frontend
-                # FIN AJOUT
+                # --- FIN Enregistrement ---
+
 
                 # 4. Attendre la prochaine bougie
                 if bot_state["stop_requested"]: break
-                interval_seconds = interval_to_seconds(local_timeframe_str)
+                interval_seconds = interval_to_seconds(local_timeframe_str) # Utilise la fonction mise à jour
                 if interval_seconds > 0:
                     current_time_s = time.time(); time_to_next_candle_s = interval_seconds - (current_time_s % interval_seconds) + 1
                     sleep_interval = 1; end_sleep = time.time() + time_to_next_candle_s
@@ -406,7 +469,7 @@ def run_bot():
     except Exception as e:
         logging.exception(f"Erreur majeure lors de l'initialisation de run_bot"); bot_state["status"] = "Erreur Init" # Frontend (avec traceback)
     finally:
-        logging.info("Boucle du bot terminée."); bot_state["status"] = "Arrêté"; bot_state["in_position"] = False; bot_state["thread"] = None # Frontend
+        logging.info("Boucle du bot terminée."); bot_state["status"] = "Arrêté"; bot_state["in_position"] = False; bot_state["thread"] = None; bot_state["entry_details"] = None # Frontend
 
 # --- Démarrage Application ---
 if __name__ == "__main__":
@@ -416,8 +479,6 @@ if __name__ == "__main__":
 
     logging.info("Démarrage de l'API Flask...") # Ce log ira au frontend
 
-
     # Utiliser debug=False et use_reloader=False pour éviter les problèmes avec les threads
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-
 
