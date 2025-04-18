@@ -202,6 +202,80 @@ def place_order(
         logger.exception(f"Erreur inattendue lors placement ordre {order_type} {side} {symbol}.")
         return None
 
+# --- Fonctions pour User Data Stream ---
+
+def start_user_data_stream() -> Optional[str]:
+    """
+    Démarre un User Data Stream et retourne le listenKey.
+    Retourne None en cas d'échec.
+    """
+    client = get_client()
+    if not client:
+        logger.error("Client Binance non initialisé pour start_user_data_stream.")
+        return None
+    try:
+        response = client.stream_get_listen_key()
+        listen_key = response.get('listenKey')
+        if listen_key:
+            logger.info(f"ListenKey User Data Stream obtenu: {listen_key[:5]}...")
+            return listen_key
+        else:
+            logger.error(f"Échec obtention ListenKey User Data Stream. Réponse: {response}")
+            return None
+    except (BinanceAPIException, BinanceRequestException) as e:
+        logger.error(f"Erreur API Binance lors de l'obtention du ListenKey: {e}")
+        return None
+    except Exception as e:
+        logger.exception("Erreur inattendue lors de l'obtention du ListenKey.")
+        return None
+
+def keepalive_user_data_stream(listen_key: str) -> bool:
+    """
+    Envoie une requête keepalive pour un listenKey donné.
+    Retourne True si succès, False sinon.
+    """
+    client = get_client()
+    if not client:
+        logger.error("Client Binance non initialisé pour keepalive_user_data_stream.")
+        return False
+    if not listen_key:
+        logger.error("Tentative de keepalive avec un listenKey vide.")
+        return False
+    try:
+        client.stream_keepalive(listenKey=listen_key)
+        logger.info(f"Keepalive envoyé pour ListenKey: {listen_key[:5]}...")
+        return True
+    except (BinanceAPIException, BinanceRequestException) as e:
+        # Une erreur ici peut signifier que la clé a expiré
+        logger.error(f"Erreur API Binance lors du keepalive pour ListenKey {listen_key[:5]}...: {e}")
+        return False
+    except Exception as e:
+        logger.exception(f"Erreur inattendue lors du keepalive pour ListenKey {listen_key[:5]}...")
+        return False
+
+def close_user_data_stream(listen_key: str) -> bool:
+    """
+    Ferme un User Data Stream associé à un listenKey.
+    Retourne True si succès, False sinon.
+    """
+    client = get_client()
+    if not client:
+        logger.error("Client Binance non initialisé pour close_user_data_stream.")
+        return False
+    if not listen_key:
+        logger.warning("Tentative de fermeture avec un listenKey vide.")
+        return True # Considérer comme succès si pas de clé à fermer
+    try:
+        client.stream_close(listenKey=listen_key)
+        logger.info(f"Requête de fermeture envoyée pour ListenKey: {listen_key[:5]}...")
+        return True
+    except (BinanceAPIException, BinanceRequestException) as e:
+        logger.error(f"Erreur API Binance lors de la fermeture du ListenKey {listen_key[:5]}...: {e}")
+        return False
+    except Exception as e:
+        logger.exception(f"Erreur inattendue lors de la fermeture du ListenKey {listen_key[:5]}...")
+        return False
+
 # --- Bloc d'Exemple/Test (inchangé) ---
 if __name__ == '__main__':
     # ... (code de test inchangé) ...
