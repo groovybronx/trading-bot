@@ -1,6 +1,6 @@
 # Binance Trading Bot Dashboard
 
-Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un tableau de bord web basique pour le monitoring et le contrôle. Il utilise une stratégie configurable basée sur les croisements de Moyennes Mobiles Exponentielles (EMA) et le Relative Strength Index (RSI), avec des filtres optionnels.
+Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un tableau de bord web basique pour le monitoring et le contrôle. Il utilise une stratégie configurable basée sur les croisements de Moyennes Mobiles Exponentielles (EMA) et le Relative Strength Index (RSI), avec des filtres optionnels. Il intègre également les WebSockets de Binance pour les mises à jour de prix en temps réel.
 
 **AVERTISSEMENT : Le trading de cryptomonnaies comporte des risques substantiels. Ce logiciel est fourni à titre éducatif et expérimental. Utilisez-le à vos propres risques. Il est FORTEMENT recommandé de tester intensivement sur le réseau TESTNET de Binance avant d'envisager une utilisation avec de l'argent réel. L'auteur n'est pas responsable des pertes financières.**
 
@@ -13,23 +13,47 @@ Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un t
     *   Filtre EMA optionnel (long terme) pour confirmation de tendance.
     *   Confirmation par volume optionnelle.
     *   Calcul de la taille de position basé sur le risque par trade (`RISK_PER_TRADE`) et l'allocation du capital (`CAPITAL_ALLOCATION`).
+*   **Données Temps Réel :** Utilise les WebSockets (`@miniTicker`) pour obtenir les mises à jour de prix en temps réel.
+*   **Gestion des Ordres :** Place des ordres `MARKET` (Achat/Vente).
+*   **Gestion d'État :**
+    *   Suit si le bot est actuellement en position.
+    *   Conserve les détails de l'ordre d'entrée.
+    *   Maintient un historique des ordres passés.
+*   **Persistance :** Sauvegarde l'état de position (`in_position`, `entry_details`) et l'historique des ordres (`order_history`) dans `bot_data.json` pour permettre la reprise après un redémarrage.
 *   **Backend Flask :** API simple pour gérer le bot et servir les données.
 *   **Dashboard Web :** Interface utilisateur basique (HTML/CSS/JS) pour :
     *   Visualiser le statut du bot (En cours, Arrêté, Erreur...).
-    *   Afficher le symbole, le timeframe (incluant `1s`), le prix actuel.
+    *   Afficher le symbole, le timeframe, le **prix actuel (via WebSocket)**.
     *   Voir la balance (USDT ou autre quote asset) et la quantité de l'asset de base possédée.
     *   Indiquer si une position est ouverte.
     *   Démarrer et arrêter le bot.
     *   Visualiser et modifier les paramètres de la stratégie (périodes EMA/RSI, niveaux RSI, risque, allocation du capital, options de filtre) en temps réel.
     *   Afficher les logs du backend en temps réel (via Server-Sent Events).
-    *   Consulter l'historique des ordres passés pendant la session actuelle, incluant la **performance en %** pour les trades clôturés.
-    *   Rafraîchissement optimisé de l'historique des ordres (déclenché par les logs).
+    *   Consulter l'historique des ordres passés, incluant la **performance en %** pour les trades clôturés.
+*   **Gestion Concurrente :** Utilise `threading` pour gérer la boucle principale du bot, le serveur Flask, et le gestionnaire WebSocket. Utilise `queue.Queue` pour la communication thread-safe du prix temps réel entre le thread WebSocket et les requêtes Flask (`/status`).
 *   **Configuration :** Paramètres principaux dans `config.py`, ajustables via l'interface web.
 *   **Gestion des Erreurs :** Logging basique et gestion des exceptions API Binance.
 
+## Architecture
+
+*   **`backend/bot.py`:** Fichier principal contenant l'application Flask, la logique de gestion du bot (démarrage/arrêt), le callback WebSocket (`process_ticker_message`), la gestion de l'état global (`bot_state`, `bot_config`) et la communication inter-threads via `latest_price_data_queue`.
+*   **`backend/strategy.py`:** Contient la logique de calcul des indicateurs techniques (EMA, RSI, Volume) et la détermination des signaux d'achat/vente basés sur les paramètres configurés. Gère également le formatage des quantités pour les ordres.
+*   **`backend/binance_client_wrapper.py`:** Encapsule les interactions avec l'API REST de Binance (initialisation du client, récupération des klines, passage d'ordres, récupération des soldes, etc.).
+*   **`config.py`:** (À la racine) Contient les clés API Binance, le flag `USE_TESTNET`, et les valeurs par défaut des paramètres de stratégie.
+*   **`bot_data.json`:** (À la racine) Fichier où l'état de position et l'historique des ordres sont sauvegardés.
+
+Le système utilise plusieurs threads :
+1.  **Thread Principal Flask:** Gère les requêtes HTTP pour l'API.
+2.  **Thread `run_bot`:** Exécute la boucle principale de la stratégie (récupération klines via REST, calcul indicateurs, décision d'entrée/sortie basée sur les indicateurs).
+3.  **Threads `ThreadedWebsocketManager`:** Gérés par `python-binance` pour écouter les messages WebSocket (`@miniTicker`) et appeler `process_ticker_message`.
+4.  **Thread `process_ticker_message`:** (Exécuté par le Manager WS) Reçoit le prix temps réel, le met dans `latest_price_data_queue`. (Pourrait aussi gérer SL/TP ici à l'avenir).
+5.  **Threads `execute_exit` (potentiels):** Lancés pour exécuter les ordres de sortie sans bloquer le thread appelant.
+
+La communication du prix temps réel du thread WebSocket vers l'API `/status` se fait via `latest_price_data_queue`. La protection des autres parties de l'état partagé (`bot_state`, `bot_config`) utilise `config_lock`.
+
 ## Tech Stack
 
-*   **Backend :** Python 3, Flask, python-binance, pandas, pandas-ta
+*   **Backend :** Python 3, Flask, Flask-CORS, python-binance, pandas, pandas-ta
 *   **Frontend :** HTML, CSS, Vanilla JavaScript
 *   **API :** Binance API
 
@@ -41,7 +65,7 @@ Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un t
 
 2.  **Cloner le dépôt :**
     ```bash
-    git clone <URL_DU_DEPOT> # Remplace par l'URL de ton dépôt Git si tu en as un
+    git clone <URL_DU_DEPOT> # Remplace par l'URL de ton dépôt Git
     cd trading-bot
     ```
 
@@ -55,22 +79,27 @@ Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un t
     ```
 
 4.  **Installer les dépendances Python :**
-    Crée un fichier `requirements.txt` à la racine du projet avec le contenu suivant :
+    Crée un fichier `requirements.txt` à la racine du projet avec le contenu suivant (ou adapte si tu en as déjà un) :
     ```txt
     Flask
     Flask-Cors
     python-binance
     pandas
     pandas-ta
-    # Ajoute d'autres dépendances si nécessaire (ex: numpy si pandas-ta le requiert explicitement)
+    requests # Dépendance implicite mais bonne à lister
+    numpy # Dépendance implicite mais bonne à lister
+    python-dateutil # Dépendance de python-binance
+    pytz # Dépendance de python-binance
+    # Ajoute d'autres dépendances si nécessaire
     ```
     Puis installe les dépendances :
     ```bash
     pip install -r requirements.txt
     ```
+    *(Note: L'installation de `pandas-ta` peut parfois nécessiter `numpy` ou d'autres dépendances système selon votre OS).*
 
 5.  **Configuration :**
-    *   Crée un fichier `config.py` à la racine du projet (ou renomme `config.py.example` s'il existe).
+    *   Crée un fichier `config.py` à la racine du projet.
     *   Modifie `config.py` pour y mettre tes **clés API Binance**.
         ```python
         # config.py
@@ -82,9 +111,9 @@ Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un t
 
         # Paramètres par défaut de la stratégie (peuvent être modifiés via l'UI)
         SYMBOL = 'BTCUSDT'
-        TIMEFRAME = '5m' # ex: '1s', '1m', '5m', '15m', '1h', '4h'
-        RISK_PER_TRADE = 0.01  # Risque 1% du capital alloué par trade
-        CAPITAL_ALLOCATION = 1.0 # Utiliser 100% (1.0) du capital disponible pour calculer la taille (ajuster si besoin, ex: 0.5 pour 50%)
+        TIMEFRAME = '1m' # Assure-toi que ça correspond à ce que tu veux par défaut
+        RISK_PER_TRADE = 0.01
+        CAPITAL_ALLOCATION = 1.0
 
         # Périodes des indicateurs
         EMA_SHORT_PERIOD = 9
@@ -104,58 +133,61 @@ Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un t
 ## Utilisation
 
 1.  **Lancer le Backend (API Flask) :**
-    Ouvre un terminal, navigue jusqu'à la racine du projet (`trading-bot`) et active ton environnement virtuel si ce n'est pas déjà fait.
+    Ouvre un terminal, navigue jusqu'à la racine du projet (`trading-bot`) et active ton environnement virtuel.
     ```bash
-    # source venv/bin/activate # Si tu es à la racine
-    python bot.py
+    # Assure-toi d'être dans le dossier trading-bot
+    # source venv/bin/activate # ou .\venv\Scripts\activate
+    python backend/bot.py
     ```
-    Le backend devrait démarrer et écouter sur `http://127.0.0.1:5000`. Tu verras les logs dans ce terminal.
+    Le backend devrait démarrer et écouter sur `http://0.0.0.0:5000`. Tu verras les logs dans ce terminal.
 
 2.  **Lancer le Serveur Frontend :**
     Ouvre un **autre** terminal, navigue jusqu'à la racine du projet (`trading-bot`).
     ```bash
+    # Assure-toi d'être dans le dossier trading-bot
     python -m http.server 8000
     ```
-    Ce serveur très simple servira les fichiers HTML/CSS/JS (il suppose que `index.html`, `style.css`, `script.js` sont à la racine). Tu peux utiliser un autre port si 8000 est occupé.
+    Ce serveur servira les fichiers statiques (HTML/CSS/JS) qui se trouvent à la racine.
 
 3.  **Accéder au Dashboard :**
-    Ouvre ton navigateur web et va à l'adresse `http://127.0.0.1:8000` (ou le port que tu as utilisé pour le serveur frontend).
+    Ouvre ton navigateur web et va à l'adresse `http://127.0.0.1:8000`.
 
 4.  **Interagir avec le Dashboard :**
-    *   Le statut, les balances, le prix, etc., devraient se charger et se mettre à jour automatiquement.
+    *   Le statut, les balances, le prix (qui doit maintenant se mettre à jour rapidement), etc., devraient se charger.
     *   Les logs du backend apparaissent dans la section "Logs".
-    *   L'historique des ordres de la session s'affiche dans la table dédiée, se mettant à jour lorsqu'un nouvel ordre est détecté. La performance des trades clôturés est affichée.
-    *   Utilise les boutons "Démarrer le Bot" / "Arrêter le Bot" pour contrôler le processus de trading.
-    *   Modifie les paramètres dans la section "Paramètres de Stratégie" et clique sur "Sauvegarder". Certains changements (comme le timeframe) peuvent nécessiter un redémarrage manuel du bot via les boutons Start/Stop pour être pleinement appliqués.
+    *   L'historique des ordres s'affiche et se met à jour.
+    *   Utilise les boutons "Démarrer le Bot" / "Arrêter le Bot".
+    *   Modifie les paramètres et clique sur "Sauvegarder".
 
 ## Stratégie Implémentée (Base)
 
 *   **Signal d'Achat (Long) :**
     1.  L'EMA courte croise au-dessus de l'EMA longue.
     2.  Le RSI n'est pas en zone de surachat extrême (`< RSI_OVERBOUGHT`).
-    3.  *Optionnel (si `USE_EMA_FILTER` est `True`)* : Le prix de clôture est au-dessus de l'EMA de filtre (long terme).
+    3.  *Optionnel (si `USE_EMA_FILTER` est `True`)* : Le prix de clôture est au-dessus de l'EMA de filtre.
     4.  *Optionnel (si `USE_VOLUME_CONFIRMATION` est `True`)* : Le volume actuel est supérieur à sa moyenne mobile.
 *   **Signal de Vente (Sortie de Long) :**
     1.  L'EMA courte croise en dessous de l'EMA longue.
     2.  Le RSI n'est pas en zone de survente extrême (`> RSI_OVERSOLD`).
-    *(Note : La logique de sortie (`check_exit_conditions`) est maintenant appelée dans la boucle principale de `bot.py` lorsque le bot est en position).*
+    *(Note : La logique de sortie (`check_exit_conditions`) est appelée dans la boucle principale `run_bot` lorsque le bot est en position).*
 *   **Gestion du Risque :**
-    *   La taille de la position est calculée pour risquer un pourcentage défini (`RISK_PER_TRADE`) d'une *portion* du solde disponible (définie par `CAPITAL_ALLOCATION`), sur la base d'un stop-loss (actuellement défini comme un pourcentage fixe sous le prix d'entrée dans `strategy.py` - **ceci est un exemple simple et pourrait être amélioré**).
-    *   La quantité est ajustée pour respecter les règles `LOT_SIZE` et `NOTIONAL` (ou `MIN_NOTIONAL`) de Binance.
+    *   La taille de la position est calculée pour risquer un pourcentage défini (`RISK_PER_TRADE`) d'une portion du solde (`CAPITAL_ALLOCATION`).
+    *   La quantité est ajustée pour respecter les règles `LOT_SIZE` et `MIN_NOTIONAL` de Binance.
+*   **Stop-Loss / Take-Profit (via WebSocket) :**
+    *   La fonction `process_ticker_message` pourrait être étendue pour vérifier le prix reçu via WebSocket par rapport aux niveaux SL/TP calculés lors de l'entrée en position (stockés dans `entry_details`) et déclencher `execute_exit` immédiatement si un niveau est atteint. *(Actuellement non implémenté dans la version fournie)*.
 
 ## TODO / Améliorations Futures
 
-*   **Améliorer le Stop-Loss :** Remplacer le stop-loss basé sur un pourcentage fixe par une méthode plus dynamique (ex: basé sur l'ATR, le dernier plus bas, etc.). Envisager des ordres Stop-Loss réels sur Binance (plutôt qu'une sortie au signal de croisement inverse).
-*   **Utiliser les WebSockets Binance :** Remplacer le polling `get_klines` par un stream WebSocket (`<symbol>@kline_<interval>`) pour une réactivité et une efficacité accrues (surtout pour les timeframes courts comme `1s`).
-*   **Optimiser les appels API :** Réduire la fréquence des appels `get_account_balance` ou regrouper les appels (peut-être via WebSockets User Data Stream).
-*   **Persistance de l'état :** Sauvegarder `bot_state` (notamment `in_position`, `entry_details`) et `order_history` dans un fichier ou une base de données pour survivre aux redémarrages.
-*   **Sécurité des Clés API :** Utiliser des variables d'environnement ou un gestionnaire de secrets plutôt que de les stocker directement dans `config.py`.
-*   **Gestion des Erreurs :** Affiner la gestion des erreurs API (rate limits, déconnexions, erreurs d'ordre spécifiques, fonds insuffisants).
-*   **Tests Automatisés :** Ajouter des tests unitaires (`pytest`) pour les fonctions critiques de la stratégie et du wrapper.
-*   **Déploiement :** Utiliser Gunicorn/uWSGI + Nginx pour un déploiement plus robuste que les serveurs de développement.
-*   **Interface Utilisateur :** Améliorer l'UI (graphiques ?, meilleure présentation des données, indicateurs de chargement).
-*   **Stratégies Multiples :** Permettre de choisir ou de combiner différentes stratégies.
-*   **Backtesting :** Intégrer une fonctionnalité de backtesting pour évaluer les performances de la stratégie sur des données historiques.
+*   **Implémenter SL/TP via WebSocket :** Ajouter la logique dans `process_ticker_message` pour une réaction rapide aux niveaux Stop-Loss et Take-Profit.
+*   **Améliorer le Stop-Loss :** Utiliser une méthode plus dynamique (ATR, etc.) pour *calculer* le niveau SL initial.
+*   **Optimiser `run_bot` :** Envisager d'utiliser le stream WebSocket `@kline_<interval>` dans `run_bot` au lieu de `get_klines` via REST pour les décisions de stratégie, surtout pour les timeframes courts.
+*   **Optimiser les appels API :** Réduire la fréquence des appels `get_account_balance` (peut-être via WebSockets User Data Stream ?).
+*   **Sécurité des Clés API :** Utiliser des variables d'environnement ou un gestionnaire de secrets.
+*   **Gestion des Erreurs :** Affiner la gestion des erreurs (rate limits, déconnexions, fonds insuffisants...).
+*   **Tests Automatisés :** Ajouter des tests unitaires (`pytest`).
+*   **Déploiement :** Utiliser Gunicorn/uWSGI + Nginx.
+*   **Interface Utilisateur :** Améliorer l'UI (graphiques ?, indicateurs de chargement).
+*   **Stratégies Multiples / Backtesting.**
 
 ## Avertissement Important
 
