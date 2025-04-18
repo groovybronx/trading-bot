@@ -1,7 +1,26 @@
 {
     "state": {
-        "in_position": false,
-        "entry_details": null
+        "in_position": true,
+        "entry_details": {
+            "order_id": 4385335,
+            "avg_price": 84974.52,
+            "quantity": 0.02095,
+            "timestamp": 1744934881857
+        }
     },
-    "history": []
+    "history": [
+        {
+            "timestamp": 1744934881857,
+            "orderId": 4385335,
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "origQty": "0.02095000",
+            "executedQty": "0.02095000",
+            "cummulativeQuoteQty": "1780.21619400",
+            "price": "0.00000000",
+            "status": "FILLED",
+            "performance_pct": null
+        }
+    ]
 }

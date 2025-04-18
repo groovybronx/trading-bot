@@ -2,32 +2,43 @@
 # Ce fichier est destiné à contenir vos clés API Binance.
 # NE COMMETTEZ JAMAIS CE FICHIER DANS UN REPOSITORY GIT PUBLIC OU PRIVÉ SI VOS VRAIES CLÉS SONT ICI.
 # La méthode la plus sûre est d'utiliser des variables d'environnement.
-# Exemple :
- 
-from dotenv import load_dotenv
 
 import os
-# Charger les variables d'environnement depuis un fichier .env
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement depuis un fichier .env (s'il existe)
 load_dotenv()
 
-BINANCE_API_KEY= os.getenv('ENV_API_KEY')
-BINANCE_API_SECRET = os.getenv('ENV_API_SECRET')
+# Récupérer les clés API depuis les variables d'environnement
+BINANCE_API_KEY = os.getenv('ENV_API_KEY', 'YOUR_API_KEY') # Fournir une valeur par défaut claire
+BINANCE_API_SECRET = os.getenv('ENV_API_SECRET', 'YOUR_SECRET_KEY') # Fournir une valeur par défaut claire
 
-# --- Remplacer par vos vraies clés UNIQUEMENT pour un usage local et sécurisé ---
-
-# --- Autres paramètres de configuration (peuvent être déplacés ici depuis bot.py) ---
-# SYMBOL = 'BTCUSDT'
-# TIMEFRAME = '5m' # Utiliser la chaîne de caractères ici peut être plus simple pour certaines fonctions
-# RISK_PER_TRADE = 0.01
-# CAPITAL_ALLOCATION = 0.1
-# EMA_SHORT_PERIOD = 9
-# EMA_LONG_PERIOD = 21
-# EMA_FILTER_PERIOD = 50
-# RSI_PERIOD = 14
-# RSI_OVERBOUGHT = 75
-# RSI_OVERSOLD = 25
-# TAKE_PROFIT_PERCENT = 0.005 # 0.5%
-# STOP_LOSS_PERCENT = 0.003 # 0.3%
+# --- Paramètres Généraux (peuvent être surchargés par bot.py/UI) ---
+SYMBOL = 'BTCUSDT'
+TIMEFRAME = '5m' # ex: '1s', '1m', '5m', '15m', '1h', '4h'
 
 # --- Utiliser le Testnet Binance (True/False) ---
-USE_TESTNET = True # Mettre à False pour utiliser l'API réelle
+# IMPORTANT: Mettre à True pour les tests ! Mettre à False pour l'API réelle.
+USE_TESTNET = True
+
+# --- Paramètres de Stratégie par Défaut (peuvent être surchargés par bot.py/UI) ---
+# Ces valeurs sont utilisées si elles ne sont pas définies dans bot.py -> bot_config
+RISK_PER_TRADE = 0.01  # Risque 1% du capital alloué par trade
+CAPITAL_ALLOCATION = 1.0 # Utiliser 100% (1.0) du capital disponible pour calculer la taille
+STOP_LOSS_PERCENTAGE = 0.02 # Exemple: 2% (Utilisé dans strategy.py)
+
+# Périodes des indicateurs
+EMA_SHORT_PERIOD = 9
+EMA_LONG_PERIOD = 21
+EMA_FILTER_PERIOD = 50
+RSI_PERIOD = 14
+RSI_OVERBOUGHT = 75
+RSI_OVERSOLD = 25
+VOLUME_AVG_PERIOD = 20
+
+# Flags pour activer/désactiver des parties de la stratégie
+USE_EMA_FILTER = True
+USE_VOLUME_CONFIRMATION = False
+
+# Note: Les valeurs ci-dessus sont des *défauts*. Le bot utilisera principalement
+# les valeurs dans bot_config (qui sont initialisées depuis ici mais modifiables via l'UI).
