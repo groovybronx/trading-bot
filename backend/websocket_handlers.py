@@ -193,6 +193,8 @@ def process_kline_message(msg: Dict[str, Any]):
                                         if len(bot_state['order_history']) > max_len:
                                             bot_state['order_history'] = bot_state['order_history'][-max_len:]
                                         logger.info(f"Kline WS: Ordre entrée {simplified.get('orderId','N/A')} ajouté historique.")
+                                        # --- AJOUT POUR RAFRAICHISSEMENT ---
+                                        logger.info("EVENT:ORDER_HISTORY_UPDATED")
                                         # Sauvegarde gérée par state_manager
                                         if not bot_core.save_data(): # Utiliser la fonction importée
                                              logger.error("Kline WS: Echec sauvegarde état après entrée !")

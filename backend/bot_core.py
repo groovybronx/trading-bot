@@ -103,6 +103,8 @@ def execute_exit(reason: str) -> Optional[Dict[str, Any]]:
                 if len(bot_state['order_history']) > max_len:
                     bot_state['order_history'] = bot_state['order_history'][-max_len:]
                 logger.info(f"Execute_exit: Ordre sortie {simplified_order.get('orderId', 'N/A')} ajouté historique.")
+                # --- AJOUT POUR RAFRAICHISSEMENT ---
+                logger.info("EVENT:ORDER_HISTORY_UPDATED")
                 if performance_pct is not None: logger.info(f"  Performance enregistrée: {performance_pct:.2f}%")
             except Exception as hist_err:
                 logger.error(f"Execute_exit: Erreur ajout ordre sortie à historique: {hist_err}")

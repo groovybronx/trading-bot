@@ -26,7 +26,7 @@ USE_TESTNET = True
 
 # --- Paramètres de Stratégie par Défaut (peuvent être surchargés par bot.py/UI) ---
 RISK_PER_TRADE = 0.01  # Risque 1% du capital alloué par trade
-CAPITAL_ALLOCATION = 1.0 # Utiliser 100% (1.0) du capital disponible pour calculer la taille
+CAPITAL_ALLOCATION = 0.05 # Utiliser 100% (1.0) du capital disponible pour calculer la taille
 
 # Niveaux Stop-Loss et Take-Profit (en pourcentage)
 STOP_LOSS_PERCENTAGE = 0.02 # Exemple: 2%
