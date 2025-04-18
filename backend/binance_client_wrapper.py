@@ -1,3 +1,5 @@
+# /Users/davidmichels/Desktop/trading-bot/backend/binance_client_wrapper.py
+
 import logging
 import threading
 import time
@@ -25,6 +27,7 @@ _client_lock = threading.Lock()
 # Configuration du logging (partagé avec bot.py)
 logger = logging.getLogger()
 
+# (get_client, get_klines, get_account_balance, get_symbol_info, get_symbol_ticker, place_order functions remain unchanged)
 def get_client() -> Optional[Client]:
     """
     Initialise et retourne le client Binance (API réelle ou testnet) de manière thread-safe.
@@ -214,14 +217,18 @@ def start_user_data_stream() -> Optional[str]:
         logger.error("Client Binance non initialisé pour start_user_data_stream.")
         return None
     try:
-        response = client.stream_get_listen_key()
-        listen_key = response.get('listenKey')
-        if listen_key:
+        # --- FIX: Assume the method now returns the key string directly ---
+        listen_key = client.stream_get_listen_key()
+
+        # Check if we received a non-empty string
+        if isinstance(listen_key, str) and listen_key:
             logger.info(f"ListenKey User Data Stream obtenu: {listen_key[:5]}...")
             return listen_key
         else:
-            logger.error(f"Échec obtention ListenKey User Data Stream. Réponse: {response}")
+            # Log the unexpected response if it wasn't a valid string
+            logger.error(f"Échec obtention ListenKey User Data Stream. Réponse inattendue: {listen_key}")
             return None
+        # --- END FIX ---
     except (BinanceAPIException, BinanceRequestException) as e:
         logger.error(f"Erreur API Binance lors de l'obtention du ListenKey: {e}")
         return None
@@ -229,6 +236,7 @@ def start_user_data_stream() -> Optional[str]:
         logger.exception("Erreur inattendue lors de l'obtention du ListenKey.")
         return None
 
+# (keepalive_user_data_stream and close_user_data_stream functions remain unchanged)
 def keepalive_user_data_stream(listen_key: str) -> bool:
     """
     Envoie une requête keepalive pour un listenKey donné.
@@ -276,7 +284,132 @@ def close_user_data_stream(listen_key: str) -> bool:
         logger.exception(f"Erreur inattendue lors de la fermeture du ListenKey {listen_key[:5]}...")
         return False
 
+
 # --- Bloc d'Exemple/Test (inchangé) ---
 if __name__ == '__main__':
-    # ... (code de test inchangé) ...
-    pass
+    # Initialisation du logging pour les tests
+    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(log_formatter)
+    logger.addHandler(stream_handler)
+    logger.setLevel(logging.DEBUG)
+
+    logger.info("--- Test du Binance Client Wrapper ---")
+
+    # Test 1: Initialisation du client
+    test_client = get_client()
+    if test_client:
+        logger.info("Test 1: Initialisation client OK")
+
+        # Test 2: Récupération Klines
+        logger.info("Test 2: Récupération Klines (BTCUSDT, 1m, limit=5)...")
+        klines = get_klines(symbol='BTCUSDT', interval='1m', limit=5)
+        if klines and len(klines) == 5:
+            logger.info(f"Test 2: Klines récupérées OK (première bougie: {klines[0]})")
+        else:
+            logger.error(f"Test 2: Échec récupération klines ou nombre incorrect (reçu: {len(klines) if klines else 'None'}).")
+
+        # Test 3: Récupération Solde USDT
+        logger.info("Test 3: Récupération Solde USDT...")
+        balance = get_account_balance(asset='USDT')
+        if balance is not None:
+            logger.info(f"Test 3: Solde USDT récupéré OK: {balance}")
+        else:
+            logger.error("Test 3: Échec récupération solde USDT.")
+
+        # Test 4: Récupération Infos Symbole
+        logger.info("Test 4: Récupération Infos Symbole (BTCUSDT)...")
+        symbol_info = get_symbol_info(symbol='BTCUSDT')
+        if symbol_info and symbol_info.get('symbol') == 'BTCUSDT':
+            logger.info("Test 4: Infos Symbole récupérées OK.")
+            # Afficher les filtres pour info
+            filters = symbol_info.get('filters', [])
+            logger.debug(f"Filtres pour BTCUSDT: {filters}")
+            lot_size = next((f for f in filters if f.get('filterType') == 'LOT_SIZE'), None)
+            min_notional = next((f for f in filters if f.get('filterType') == 'MIN_NOTIONAL'), None)
+            logger.debug(f"  LOT_SIZE: {lot_size}")
+            logger.debug(f"  MIN_NOTIONAL: {min_notional}")
+        else:
+            logger.error("Test 4: Échec récupération infos symbole.")
+
+        # Test 5: Récupération Ticker
+        logger.info("Test 5: Récupération Ticker (BTCUSDT)...")
+        ticker = get_symbol_ticker(symbol='BTCUSDT')
+        if ticker and 'price' in ticker:
+             logger.info(f"Test 5: Ticker récupéré OK: Prix={ticker['price']}")
+        else:
+             logger.error("Test 5: Échec récupération ticker.")
+
+        # Test 6 & 7: User Data Stream (si testnet ou si vous êtes sûr)
+        if USE_TESTNET:
+            logger.info("Test 6: Démarrage User Data Stream...")
+            test_listen_key = start_user_data_stream()
+            if test_listen_key:
+                logger.info(f"Test 6: ListenKey obtenu OK: {test_listen_key}")
+
+                logger.info("Test 7: Keepalive User Data Stream...")
+                time.sleep(2) # Attendre un peu
+                keepalive_ok = keepalive_user_data_stream(test_listen_key)
+                if keepalive_ok: logger.info("Test 7: Keepalive OK.")
+                else: logger.error("Test 7: Échec Keepalive.")
+
+                logger.info("Test 8: Fermeture User Data Stream...")
+                time.sleep(2)
+                close_ok = close_user_data_stream(test_listen_key)
+                if close_ok: logger.info("Test 8: Fermeture OK.")
+                else: logger.error("Test 8: Échec Fermeture.")
+
+            else:
+                logger.error("Test 6: Échec obtention ListenKey.")
+        else:
+            logger.warning("Tests 6, 7, 8 (User Data Stream) sautés car USE_TESTNET=False.")
+
+        # ATTENTION: Le test de placement d'ordre n'est pas exécuté par défaut
+        # Décommentez et adaptez prudemment si nécessaire, SURTOUT EN TESTNET
+        # logger.info("Test 9: Placement d'un ordre MARKET BUY (TESTNET UNIQUEMENT)...")
+        # if USE_TESTNET and symbol_info:
+        #     # Calculer une petite quantité juste au-dessus du minNotional pour le test
+        #     min_notional_filter = next((f for f in symbol_info.get('filters', []) if f.get('filterType') == 'MIN_NOTIONAL'), None)
+        #     current_price = float(ticker.get('price', '0')) if ticker else 0
+        #     test_qty = 0.0
+        #     if min_notional_filter and current_price > 0:
+        #         min_notional_val = float(min_notional_filter.get('minNotional', '10'))
+        #         # Viser un notionnel légèrement supérieur au minimum
+        #         target_notional = min_notional_val * 1.1
+        #         raw_qty = target_notional / current_price
+        #         # Importer strategy pour formater
+        #         try:
+        #             from strategy import format_quantity
+        #             test_qty = format_quantity(raw_qty, symbol_info)
+        #             # Double vérification si la quantité formatée est toujours suffisante
+        #             if test_qty * current_price < min_notional_val:
+        #                  logger.warning("Quantité formatée insuffisante pour MIN_NOTIONAL, tentative d'augmentation.")
+        #                  # Essayer d'ajouter un step_size
+        #                  lot_size_filter = next((f for f in symbol_info.get('filters', []) if f.get('filterType') == 'LOT_SIZE'), None)
+        #                  if lot_size_filter:
+        #                      step_size = float(lot_size_filter.get('stepSize', '0'))
+        #                      if step_size > 0: test_qty += step_size
+        #                      test_qty = format_quantity(test_qty, symbol_info) # Re-formater
+
+        #         except ImportError:
+        #             logger.error("Impossible d'importer strategy.format_quantity pour le test d'ordre.")
+        #         except Exception as fmt_e:
+        #              logger.error(f"Erreur formatage quantité test: {fmt_e}")
+
+        #     if test_qty > 0:
+        #         logger.info(f"Tentative de placer un ordre MARKET BUY de {test_qty} BTCUSDT...")
+        #         order = place_order(symbol='BTCUSDT', side='BUY', quantity=test_qty, order_type='MARKET')
+        #         if order:
+        #             logger.info(f"Test 9: Ordre placé OK: {order}")
+        #         else:
+        #             logger.error("Test 9: Échec placement ordre.")
+        #     else:
+        #          logger.error("Test 9: Impossible de calculer une quantité de test valide pour l'ordre.")
+
+        # else:
+        #     logger.warning("Test 9 (Ordre) sauté (pas en Testnet ou infos symbole manquantes).")
+
+    else:
+        logger.error("Test 1: Échec initialisation client. Tests suivants annulés.")
+
+    logger.info("--- Fin des tests du Binance Client Wrapper ---")
