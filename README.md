@@ -1,207 +1,133 @@
-# Binance Trading Bot Dashboard
+# Binance Trading Bot avec Dashboard Web
 
-Ce projet est un bot de trading simple pour Binance, écrit en Python, avec un tableau de bord web basique pour le monitoring et le contrôle. Il utilise une stratégie configurable basée sur les croisements de Moyennes Mobiles Exponentielles (EMA) et le Relative Strength Index (RSI), avec des filtres optionnels. Il intègre également les WebSockets de Binance pour les mises à jour de prix, de klines, et des données utilisateur en temps réel.
-
-**AVERTISSEMENT : Le trading de cryptomonnaies comporte des risques substantiels. Ce logiciel est fourni à titre éducatif et expérimental. Utilisez-le à vos propres risques. Il est FORTEMENT recommandé de tester intensivement sur le réseau TESTNET de Binance avant d'envisager une utilisation avec de l'argent réel. L'auteur n'est pas responsable des pertes financières.**
+Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagné d'une interface web (Dashboard) construite avec Flask et JavaScript. Il permet de surveiller l'état du bot, de visualiser les ordres, de consulter les logs en temps réel, de démarrer/arrêter le bot et de configurer les paramètres de stratégie via le navigateur.
 
 ## Fonctionnalités
 
-*   **Connexion Binance :** Se connecte à l'API Binance (réelle ou testnet via `config.py`).
-*   **Stratégie Configurable :**
-    *   Basée sur le croisement des EMA (courte/longue).
-    *   Filtre RSI pour éviter les entrées en conditions extrêmes.
-    *   Filtre EMA optionnel (long terme) pour confirmation de tendance.
-    *   Confirmation par volume optionnelle.
-    *   Calcul de la taille de position basé sur le risque par trade (`RISK_PER_TRADE`) et l'allocation du capital (`CAPITAL_ALLOCATION`).
-*   **Données Temps Réel (WebSockets) :**
-    *   Utilise `@miniTicker` pour le prix actuel et le déclenchement rapide du Stop-Loss/Take-Profit.
-    *   Utilise `@kline_<interval>` pour recevoir les bougies fermées et déclencher l'analyse de stratégie.
-    *   Utilise le User Data Stream pour la mise à jour en temps réel des soldes du compte (`outboundAccountPosition`) et le suivi des ordres (`executionReport`).
-*   **Gestion des Ordres :** Place des ordres `MARKET` (Achat/Vente).
-*   **Gestion d'État :**
-    *   Suit si le bot est actuellement en position.
-    *   Conserve les détails de l'ordre d'entrée (prix, quantité, timestamp).
-    *   Maintient un historique des ordres passés.
-*   **Persistance :** Sauvegarde l'état de position (`in_position`, `entry_details`) et l'historique des ordres (`order_history`) dans `bot_data.json` pour permettre la reprise après un redémarrage.
-*   **Backend Flask :** API simple pour gérer le bot et servir les données.
-*   **Dashboard Web :** Interface utilisateur basique (HTML/CSS/JS) pour :
-    *   Visualiser le statut du bot (En cours, Arrêté, Erreur...).
-    *   Afficher le symbole, le timeframe.
-    *   Voir la balance (Quote Asset) et la quantité de l'Asset de Base possédée (mises à jour via User Data Stream).
-    *   Afficher le prix actuel (via WebSocket Ticker).
-    *   Indiquer si une position est ouverte (avec détails d'entrée).
-    *   Démarrer et arrêter le bot.
-    *   Visualiser et modifier les paramètres de la stratégie en temps réel.
-    *   Afficher les logs du backend et recevoir les notifications de mise à jour de l'historique (via Server-Sent Events).
-    *   Consulter l'historique des ordres passés (trié, plus récent en premier), incluant la performance en % pour les trades clôturés, avec rafraîchissement automatique.
-*   **Gestion Concurrente :** Utilise `threading` pour gérer le serveur Flask, la boucle principale simplifiée du bot (`run_bot`), le thread de keepalive du User Data Stream (`run_keepalive`), et le gestionnaire WebSocket. Utilise `queue.Queue` pour la communication thread-safe (logs SSE, prix ticker).
-*   **Configuration :** Paramètres principaux dans `config.py`, ajustables via l'interface web.
-*   **Gestion des Erreurs :** Logging basique et gestion des exceptions API Binance.
+*   **Connexion Binance :** Utilise l'API REST et les WebSockets de Binance (Spot).
+*   **Support Testnet/Production :** Configurable via le fichier `.env`.
+*   **Stratégies Multiples :**
+    *   **SWING :** Basée sur les indicateurs EMA et RSI sur les données de Klines (bougies).
+    *   **SCALPING :** Basée sur les données temps réel du Book Ticker (carnet d'ordres simplifié).
+*   **Dashboard Web :** Interface utilisateur pour :
+    *   Visualiser l'état du bot (RUNNING, STOPPED, etc.).
+    *   Afficher la balance (Quote Asset), la quantité détenue (Base Asset).
+    *   Afficher le prix actuel (Bid/Ask ou Mid-Price).
+    *   Indiquer si une position est ouverte et les détails d'entrée.
+    *   Contrôler le bot (Démarrer / Arrêter).
+    *   Configurer les paramètres de la stratégie sélectionnée.
+    *   Afficher l'historique des ordres de la session avec calcul de performance pour les trades complétés (BUY puis SELL).
+    *   Afficher les logs du backend en temps réel.
+*   **Communication Temps Réel :** Utilise les WebSockets pour pousser les mises à jour d'état, les logs et les données de marché (ticker) vers le frontend sans rechargement de page.
+*   **Persistance :** Sauvegarde l'état de base (position, historique) dans `bot_data.json` pour pouvoir reprendre après un redémarrage (dans une certaine mesure).
 
-## Architecture (Refactorisée)
+## Architecture
 
-Le code backend est maintenant structuré en plusieurs modules pour une meilleure organisation :
+*   **Backend (`backend/`) :**
+    *   **`app.py` :** Serveur Flask gérant les routes API (status, start, stop, parameters) et le serveur WebSocket (`/ws_logs`).
+    *   **`bot_core.py` :** Logique principale du bot, gestion du thread principal, connexion aux WebSockets Binance.
+    *   **`state_manager.py` :** Gère l'état interne du bot (statut, balance, position, historique, configuration, etc.) et sa persistance.
+    *   **`config.py` / `config_manager.py` :** Charge et gère la configuration (depuis `.env` et les mises à jour via l'API).
+    *   **`binance_client_wrapper.py` :** Encapsule les interactions avec l'API Binance (REST et WebSockets via `python-binance`).
+    *   **`websocket_handlers.py` :** Traite les messages reçus des WebSockets Binance (Klines, BookTicker, User Data).
+    *   **`websocket_utils.py` :** Gère la diffusion des messages (logs, état, ticker) du backend vers les clients WebSocket du frontend.
+    *   **`strategies/` (implicite) :** Contient la logique spécifique à chaque stratégie (calculs d'indicateurs, signaux d'entrée/sortie).
+    *   **`utils/logger.py` :** Configure le logging (console et WebSocket).
+*   **Frontend (`frontend/`) :**
+    *   **`index.html` :** Structure de la page du dashboard.
+    *   **`style.css` :** Mise en forme et styles visuels.
+    *   **`script.js` :** Logique côté client, connexion WebSocket au backend, mise à jour dynamique de l'interface, envoi des commandes API (start/stop/save).
 
-*   **`backend/app.py`:** Point d'entrée principal. Initialise l'application Flask, configure CORS, enregistre le Blueprint API et lance le serveur.
-*   **`backend/logging_config.py`:** Configure le système de logging (console et queue pour SSE). Exporte `log_queue`.
-*   **`backend/config_manager.py`:** Charge la configuration depuis `config.py`, définit les constantes (`VALID_TIMEFRAMES`, `TIMEFRAME_CONSTANT_MAP`), et maintient le dictionnaire `bot_config` modifiable.
-*   **`backend/state_manager.py`:** Définit et gère l'état global du bot (`bot_state`), l'historique des klines (`kline_history`), la queue de prix (`latest_price_queue`), les verrous (`config_lock`, `kline_history_lock`), et les fonctions de persistance (`save_data`, `load_data`).
-*   **`backend/websocket_handlers.py`:** Contient les fonctions de callback pour les messages des différents WebSockets :
-    *   `process_ticker_message`: Traite les messages `@miniTicker`, met à jour `latest_price_queue`, et vérifie/déclenche le Stop-Loss et le Take-Profit.
-    *   `process_kline_message`: Traite les messages `@kline_<interval>`, met à jour `kline_history`, et déclenche l'analyse de stratégie (`calculate_indicators_and_signals`, `check_entry_conditions`, `check_exit_conditions`) sur les bougies fermées.
-    *   `process_user_data_message`: Traite les messages du User Data Stream, notamment `outboundAccountPosition` pour mettre à jour les soldes dans `bot_state` et `executionReport` pour logger les événements d'ordre.
-*   **`backend/bot_core.py`:** Contient la logique métier principale :
-    *   `start_bot_core`, `stop_bot_core`: Fonctions appelées par l'API pour gérer le cycle de vie complet du bot (nettoyage, initialisation, démarrage/arrêt des threads et WebSockets, fermeture du listen key).
-    *   `run_bot`: Boucle principale simplifiée du thread du bot (attend principalement l'ordre d'arrêt).
-    *   `run_keepalive`: Thread qui envoie périodiquement des keepalives pour le User Data Stream.
-    *   `execute_exit`: Fonction centralisée pour placer l'ordre de vente de sortie de position.
-*   **`backend/api_routes.py`:** Définit un Flask Blueprint contenant toutes les routes de l'API REST (`/status`, `/parameters`, `/start`, `/stop`, `/order_history`, `/stream_logs`). Interagit avec `state_manager` et `bot_core`.
-*   **`backend/strategy.py`:** (Inchangé) Contient la logique de calcul des indicateurs techniques (EMA, RSI, Volume) et la détermination des signaux d'achat/vente. Gère également le formatage des quantités.
-*   **`backend/binance_client_wrapper.py`:** (Inchangé) Encapsule les interactions avec l'API REST de Binance (initialisation, klines, ordres, soldes, gestion User Data Stream).
-*   **`config.py`:** (Racine) Contient les clés API, `USE_TESTNET`, et les valeurs par défaut des paramètres.
-*   **`bot_data.json`:** (Racine) Fichier de persistance pour l'état et l'historique.
+## Prérequis
 
-**Threads principaux :**
-1.  **Thread Principal Flask:** Gère les requêtes HTTP API.
-2.  **Thread `run_bot`:** Boucle de vie principale du bot, maintenant très légère (attend l'arrêt).
-3.  **Thread `run_keepalive`:** Maintient la connexion User Data Stream active.
-4.  **Threads `ThreadedWebsocketManager`:** Gérés par `python-binance` pour écouter les 3 flux WebSocket (Ticker, Kline, User) et appeler les callbacks respectifs dans `websocket_handlers.py`.
-5.  **Threads `execute_exit` (potentiels):** Lancés pour exécuter les ordres de sortie sans bloquer.
-
-**Communication :**
-*   **API REST:** Pour le contrôle (start/stop), la configuration (get/set params), et la récupération d'état (status, history).
-*   **Server-Sent Events (SSE):** Pour streamer les logs et les événements (`EVENT:ORDER_HISTORY_UPDATED`) vers le frontend.
-*   **Verrous (`threading.Lock`):** Pour protéger l'accès concurrent aux données partagées (`bot_state`, `bot_config`, `kline_history`).
-*   **Queues (`queue.Queue`):** Pour la communication inter-thread (logs SSE, prix ticker).
-
-## Tech Stack
-
-*   **Backend :** Python 3, Flask, Flask-CORS, python-binance, pandas, pandas-ta
-*   **Frontend :** HTML, CSS, Vanilla JavaScript
-*   **API :** Binance API
+*   Python 3.8+
+*   pip (gestionnaire de paquets Python)
+*   Un compte Binance (Testnet ou Production)
+*   Clé API et Secret API Binance
+*   Un navigateur web moderne
 
 ## Installation
 
-1.  **Prérequis :**
-    *   Python 3.7+
-    *   pip
-
-2.  **Cloner le dépôt :**
+1.  **Cloner le dépôt :**
     ```bash
-    git clone <URL_DU_DEPOT> # Remplace par l'URL de ton dépôt Git
-    cd trading-bot
+    git clone <url-du-depot>
+    cd <nom-du-dossier-du-depot>
     ```
-
-3.  **Créer un environnement virtuel (recommandé) :**
+2.  **Créer un environnement virtuel :**
     ```bash
     python -m venv venv
-    # Sur Linux/macOS:
-    source venv/bin/activate
-    # Sur Windows:
-    .\venv\Scripts\activate
     ```
-
-4.  **Installer les dépendances Python :**
-    Assurez-vous d'avoir un fichier `requirements.txt` à la racine avec au moins :
+3.  **Activer l'environnement virtuel :**
+    *   macOS/Linux : `source venv/bin/activate`
+    *   Windows : `venv\Scripts\activate`
+4.  **Installer les dépendances :**
+    Créez un fichier `requirements.txt` (s'il n'existe pas) avec au moins les dépendances suivantes (ajustez les versions si nécessaire) :
     ```txt
-    Flask
-    Flask-Cors
-    python-binance
-    pandas
-    pandas-ta
-    requests
-    numpy
-    # Ajoutez d'autres dépendances si nécessaire (ex: python-dateutil, pytz si non inclus par python-binance)
+    # requirements.txt
+    Flask>=2.0
+    python-binance>=1.0.17 # Ou la version que vous utilisez
+    websockets>=10.0 # Pour le serveur WS Flask -> Frontend
+    python-dotenv>=0.19
+    requests>=2.25 # Souvent une dépendance de python-binance
+    # Ajoutez d'autres dépendances si utilisées (ex: pandas, numpy, TA-Lib si utilisées dans les stratégies)
     ```
     Puis installez :
     ```bash
     pip install -r requirements.txt
     ```
 
-5.  **Configuration :**
-    *   Créez un fichier `config.py` à la racine du projet (s'il n'existe pas).
-    *   Modifiez `config.py` pour y mettre vos **clés API Binance**.
-        ```python
-        # config.py
-        BINANCE_API_KEY = "VOTRE_CLE_API"
-        BINANCE_API_SECRET = "VOTRE_SECRET_API"
+## Configuration
 
-        # Mettre à True pour utiliser le réseau de test Binance
-        USE_TESTNET = True # IMPORTANT: Mettre à True pour les tests !
+1.  **Créer le fichier `.env` :**
+    À la racine du projet, créez un fichier nommé `.env`.
+2.  **Ajouter les clés API :**
+    ```dotenv
+    # .env
+    BINANCE_API_KEY="VOTRE_CLE_API_BINANCE"
+    BINANCE_API_SECRET="VOTRE_SECRET_API_BINANCE"
 
-        # Paramètres par défaut de la stratégie (peuvent être modifiés via l'UI)
-        SYMBOL = 'BTCUSDT'
-        TIMEFRAME = '1m' # Assure-toi que ça correspond à ce que tu veux par défaut
-        RISK_PER_TRADE = 0.01
-        CAPITAL_ALLOCATION = 1.0
-        STOP_LOSS_PERCENTAGE = 0.02 # SL initial en %
-        TAKE_PROFIT_PERCENTAGE = 0.05 # TP initial en %
-
-        # Périodes des indicateurs
-        EMA_SHORT_PERIOD = 9
-        EMA_LONG_PERIOD = 21
-        EMA_FILTER_PERIOD = 50
-        RSI_PERIOD = 14
-        RSI_OVERBOUGHT = 75
-        RSI_OVERSOLD = 25
-        VOLUME_AVG_PERIOD = 20
-
-        # Flags pour activer/désactiver des parties de la stratégie
-        USE_EMA_FILTER = True
-        USE_VOLUME_CONFIRMATION = False
-        ```
-    *   **IMPORTANT :** Commencez TOUJOURS avec `USE_TESTNET = True` pour tester sans risque financier.
-
-## Utilisation
-
-1.  **Lancer le Backend (API Flask) :**
-    Ouvre un terminal, navigue jusqu'au dossier `backend` (`trading-bot/backend`) et active ton environnement virtuel.
-    ```bash
-    # Assure-toi d'être dans le dossier trading-bot/backend
-    # source ../venv/bin/activate # ou ..\venv\Scripts\activate si lancé depuis backend/
-    python app.py
+    # Utiliser le Testnet (true) ou le réseau de production (false)
+    USE_TESTNET="true"
     ```
-    Le backend devrait démarrer et écouter sur `http://0.0.0.0:5000`. Tu verras les logs dans ce terminal.
+    **IMPORTANT :** N'ajoutez jamais vos clés API réelles à Git. Assurez-vous que `.env` est dans votre fichier `.gitignore`.
+3.  **Autres configurations :** Les paramètres de stratégie (Symbol, Timeframe, EMA, RSI, SL/TP, etc.) sont principalement gérés via l'interface web. Les valeurs par défaut au premier lancement sont définies dans `config.py`.
 
-2.  **Lancer le Serveur Frontend :**
-    Ouvre un **autre** terminal, navigue jusqu'au dossier `frontend` (`trading-bot/frontend`).
+## Lancement
+
+1.  **Activer l'environnement virtuel** (si ce n'est pas déjà fait) :
     ```bash
-    # Assure-toi d'être dans le dossier trading-bot/frontend
-    python -m http.server 8000
+    source venv/bin/activate # ou venv\Scripts\activate
     ```
-    Ce serveur servira les fichiers statiques (HTML/CSS/JS) qui se trouvent dans le dossier `frontend`.
+2.  **Démarrer le backend Flask :**
+    ```bash
+    python backend/app.py
+    ```
+    Le serveur indiquera l'adresse sur laquelle il écoute (par exemple `http://127.0.0.1:5000`).
+3.  **Ouvrir le Dashboard :**
+    Ouvrez votre navigateur web et allez à l'adresse indiquée par Flask (généralement `http://127.0.0.1:5000`).
 
-3.  **Accéder au Dashboard :**
-    Ouvre ton navigateur web et va à l'adresse `http://127.0.0.1:8000`.
+## Utilisation du Dashboard
 
-4.  **Interagir avec le Dashboard :**
-    *   Le statut, les balances, le prix, etc., devraient se charger et se mettre à jour.
-    *   Les logs du backend apparaissent dans la section "Logs".
-    *   L'historique des ordres s'affiche et se met à jour automatiquement lorsqu'un ordre est ajouté.
-    *   Utilise les boutons "Démarrer le Bot" / "Arrêter le Bot".
-    *   Modifie les paramètres et clique sur "Sauvegarder".
+*   **Statut du Bot :** Affiche l'état actuel, la stratégie, le symbole, les balances, le prix et la position.
+*   **Historique des Ordres :** Liste les ordres passés pendant la session actuelle du backend. Les lignes BUY/SELL sont colorées, et la performance est calculée pour les trades SELL fermant une position BUY précédente.
+*   **Logs :** Affiche les messages de log provenant du backend en temps réel.
+*   **Contrôles :**
+    *   `Démarrer le Bot` : Lance le processus principal du bot (connexion aux WebSockets Binance, exécution de la stratégie).
+    *   `Arrêter le Bot` : Arrête le processus principal et ferme les connexions WebSocket Binance.
+*   **Paramètres de Stratégie :**
+    *   Sélectionnez le `Type de Stratégie` (SWING ou SCALPING) pour afficher les paramètres pertinents.
+    *   Modifiez les valeurs souhaitées.
+    *   Cliquez sur `Sauvegarder les Paramètres`. Un message indiquera le succès ou l'échec.
+    *   **Note :** Certains changements de paramètres (comme `STRATEGY_TYPE` ou `TIMEFRAME_STR`) peuvent nécessiter un **arrêt** puis un **redémarrage** du bot pour être pleinement pris en compte, car ils affectent les abonnements WebSocket ou la logique de base. Le backend peut afficher un message à ce sujet dans les logs ou via l'API.
 
-## Stratégie Implémentée (Base)
+## Avertissement
 
-*   **Signal d'Achat (Long) :** (Déclenché par `process_kline_message`)
-    1.  L'EMA courte croise au-dessus de l'EMA longue sur une bougie fermée.
-    2.  Le RSI n'est pas en zone de surachat extrême (`< RSI_OVERBOUGHT`).
-    3.  *Optionnel (si `USE_EMA_FILTER` est `True`)* : Le prix de clôture est au-dessus de l'EMA de filtre.
-    4.  *Optionnel (si `USE_VOLUME_CONFIRMATION` est `True`)* : Le volume de la bougie est supérieur à sa moyenne mobile.
-*   **Signal de Vente (Sortie de Long - Indicateur) :** (Déclenché par `process_kline_message`)
-    1.  L'EMA courte croise en dessous de l'EMA longue sur une bougie fermée.
-    2.  Le RSI n'est pas en zone de survente extrême (`> RSI_OVERSOLD`).
-*   **Sortie Stop-Loss / Take-Profit :** (Déclenché par `process_ticker_message`)
-    1.  Le prix reçu via le WebSocket `@miniTicker` atteint ou dépasse le niveau Stop-Loss calculé lors de l'entrée (`entry_price * (1 - STOP_LOSS_PERCENTAGE)`).
-    2.  Le prix reçu via le WebSocket `@miniTicker` atteint ou dépasse le niveau Take-Profit calculé lors de l'entrée (`entry_price * (1 + TAKE_PROFIT_PERCENTAGE)`).
-*   **Gestion du Risque :**
-    *   La taille de la position est calculée pour risquer un pourcentage défini (`RISK_PER_TRADE`) d'une portion du solde (`CAPITAL_ALLOCATION`).
-    *   La quantité est ajustée pour respecter les règles `LOT_SIZE` et `MIN_NOTIONAL` de Binance.
+Le trading de cryptomonnaies comporte des risques financiers importants. Ce bot est fourni à titre éducatif et expérimental. Utilisez-le à vos propres risques. L'auteur n'est pas responsable des pertes financières potentielles. Assurez-vous de bien comprendre le code et la stratégie avant de l'utiliser avec de l'argent réel. Il est fortement recommandé de tester intensivement sur le **Testnet** de Binance.
+
 
 ## TODO / Améliorations Futures
 
 *   **Améliorer le Stop-Loss/Take-Profit :** Utiliser des méthodes plus dynamiques (ATR, points pivots, etc.) pour *calculer* les niveaux SL/TP initiaux ou utiliser des SL suiveurs.
-*   **Sécurité des Clés API :** Utiliser des variables d'environnement ou un gestionnaire de secrets (ex: `python-dotenv`).
 *   **Gestion des Erreurs :** Affiner la gestion des erreurs (rate limits, déconnexions WebSocket, fonds insuffisants, erreurs d'ordre spécifiques). Afficher les erreurs importantes dans l'UI.
 *   **Tests Automatisés :** Ajouter des tests unitaires (`pytest`) pour la stratégie, les handlers, le core.
 *   **Déploiement :** Utiliser Gunicorn/uWSGI + Nginx pour la production.
