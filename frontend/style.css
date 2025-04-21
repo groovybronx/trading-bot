@@ -209,22 +209,22 @@ footer {
 }
 
 /* Styles pour la performance */
-.performance-positive {
+.perf-positive {
     color: green;
     font-weight: bold;
 }
 
-.performance-negative {
+.perf-negative {
     color: red;
     font-weight: bold;
-}
+} 
 
 /* Styles pour le côté (BUY/SELL) */
-td.buy {
+td.side-buy {
     color: green;
     font-weight: bold;
 }
-td.sell {
+td.side-sell {
     color: red;
     font-weight: bold;
 }

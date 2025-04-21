@@ -31,13 +31,13 @@ def process_book_ticker_message(msg: Dict[str, Any]):
     try:
         # Validate message structure
         if isinstance(msg, dict) and 's' in msg and 'b' in msg and 'a' in msg:
-            logger.debug(f"process_book_ticker_message: Processing valid ticker for {msg.get('s')}")
+            #logger.debug(f"process_book_ticker_message: Processing valid ticker for {msg.get('s')}")
             symbol = msg['s']
             # Update the latest ticker in the state manager
             state_manager.update_book_ticker(msg)
 
             # --- Broadcast state update after ticker update ---
-            logger.debug(f"process_book_ticker_message: Broadcasting state update after ticker update for {symbol}")
+            #logger.debug(f"process_book_ticker_message: Broadcasting state update after ticker update for {symbol}")
             broadcast_state_update()
             # --- End Broadcast ---
 
