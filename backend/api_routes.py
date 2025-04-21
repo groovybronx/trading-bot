@@ -126,6 +126,7 @@ def get_order_history():
     """Retourne l'historique des ordres stocké."""
     try:
         history = state_manager.get_order_history()
+        # Return the history list directly
         return jsonify(history)
     except Exception as e:
         logger.error(f"API /order_history: Erreur récupération historique: {e}", exc_info=True)
@@ -163,87 +164,107 @@ def handle_place_order():
 
     logger.debug(f"API /place_order: Données reçues: {data}")
 
+    # Validate required fields
     required_keys = ["symbol", "side", "order_type", "quantity"]
     if not all(key in data for key in required_keys):
-        logger.error(f"API /place_order: Données manquantes. Requis: {required_keys}, Reçu: {list(data.keys())}")
-        return jsonify({"success": False, "message": f"Données manquantes. Requis: {required_keys}"}), 400
+        missing = [key for key in required_keys if key not in data]
+        logger.error(f"API /place_order: Données manquantes: {missing}")
+        return jsonify({"success": False, "message": f"Données manquantes: {', '.join(missing)}"}), 400
 
+    # Prepare parameters for the wrapper, removing None values
     order_params = {
         "symbol": data["symbol"],
         "side": data["side"],
         "order_type": data["order_type"],
         "quantity": data["quantity"],
-        "price": data.get("price"),
-        "time_in_force": data.get("time_in_force")
+        "price": data.get("price"), # Optional for LIMIT
+        "time_in_force": data.get("time_in_force") # Optional for LIMIT
     }
     order_params = {k: v for k, v in order_params.items() if v is not None}
+
+    # Validate price for LIMIT orders
+    if order_params["order_type"] == 'LIMIT' and "price" not in order_params:
+         logger.error("API /place_order: Prix manquant pour ordre LIMIT.")
+         return jsonify({"success": False, "message": "Prix manquant pour ordre LIMIT."}), 400
 
     try:
         logger.debug("API /place_order: Calling binance_client_wrapper.place_order...")
         order_result = binance_client_wrapper.place_order(**order_params)
         logger.debug("API /place_order: binance_client_wrapper.place_order returned.")
 
-        if order_result:
-            logger.info(f"API /place_order: Requête d'ordre envoyée via wrapper. Résultat API: {order_result.get('status')}")
-
-            order_status = order_result.get('status')
-            order_type = order_result.get('type')
-            order_side = order_result.get('side')
-            order_id = order_result.get('orderId')
-
-            if order_type == 'MARKET' and order_status == 'FILLED' and order_side == 'BUY':
-                logger.info(f"API /place_order: Ordre MARKET BUY {order_id} FILLED via REST. Mise à jour état immédiate.")
-                try:
-                    exec_qty = float(order_result.get('executedQty', 0))
-                    quote_qty = float(order_result.get('cummulativeQuoteQty', 0))
-                    if exec_qty > 0:
-                        avg_price = quote_qty / exec_qty
-                        entry_timestamp = order_result.get('transactTime', int(time.time() * 1000))
-
-                        state_updates = {
-                            "in_position": True,
-                            "entry_details": {
-                                "order_id": order_id,
-                                "avg_price": avg_price,
-                                "quantity": exec_qty,
-                                "timestamp": entry_timestamp,
-                            },
-                            "open_order_id": None,
-                            "open_order_timestamp": None,
-                        }
-
-                        # --- ADD DETAILED LOCK LOGGING ---
-                        logger.debug(f"API /place_order: Attempting state_manager.update_state...")
-                        update_start = time.monotonic()
-                        state_manager.update_state(state_updates)
-                        update_duration = time.monotonic() - update_start
-                        logger.debug(f"API /place_order: state_manager.update_state finished (took {update_duration:.4f}s).")
-
-                        logger.debug(f"API /place_order: Attempting state_manager.save_persistent_data...")
-                        save_start = time.monotonic()
-                        state_manager.save_persistent_data()
-                        save_duration = time.monotonic() - save_start
-                        logger.debug(f"API /place_order: state_manager.save_persistent_data finished (took {save_duration:.4f}s).")
-                        # --- END DETAILED LOCK LOGGING ---
-
-                        # Broadcast in a separate thread
-                        logger.debug(f"API /place_order: Starting broadcast thread...")
-                        broadcast_thread = threading.Thread(target=broadcast_state_update, daemon=True)
-                        broadcast_thread.start()
-                        logger.debug(f"API /place_order: Broadcast thread started.")
-
-                        logger.info(f"API /place_order: État mis à jour (via REST): EN POSITION @ {avg_price:.4f}, Qty={exec_qty}")
-                    else:
-                        logger.warning(f"API /place_order: Ordre MARKET BUY {order_id} FILLED via REST mais quantité nulle?")
-                except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
-                    logger.error(f"API /place_order: Erreur traitement MARKET FILLED via REST {order_id}: {e}", exc_info=True)
-
-            total_request_time = time.monotonic() - request_start_time
-            logger.debug(f"API /place_order: Preparing to return JSON response (Total time: {total_request_time:.4f}s)...")
-            return jsonify({"success": True, "message": "Requête d'ordre envoyée à Binance.", "order_details": order_result}), 200
-        else:
+        # Check if the order placement call itself failed
+        if not order_result:
             logger.error("API /place_order: Échec placement ordre (wrapper a retourné None).")
             return jsonify({"success": False, "message": "Échec de la requête de placement d'ordre auprès de Binance (voir logs backend)."}), 500
+
+        # Log the immediate result from the API
+        order_status = order_result.get('status', 'UNKNOWN')
+        order_id = order_result.get('orderId', 'N/A')
+        logger.info(f"API /place_order: Requête d'ordre envoyée via wrapper. Résultat API: {order_status}")
+
+        # --- *** MODIFIED: Trigger history refresh via REST in background *** ---
+        symbol_from_result = order_result.get('symbol')
+        if symbol_from_result:
+            logger.debug(f"API /place_order: Triggering history refresh for {symbol_from_result} via REST...")
+            # Run the refresh in a background thread to avoid blocking the response
+            threading.Thread(target=bot_core.refresh_order_history_via_rest, args=(symbol_from_result, 50), daemon=True).start()
+        else:
+            logger.warning("API /place_order: Cannot trigger history refresh, symbol missing in order result.")
+        # --- *** END MODIFIED *** ---
+
+        # --- Specific Handling for Immediate MARKET BUY Fill via REST ---
+        # This state update logic remains important for immediate UI feedback on position status
+        order_type = order_result.get('type')
+        order_side = order_result.get('side')
+        if order_type == 'MARKET' and order_status == 'FILLED' and order_side == 'BUY':
+            logger.info(f"API /place_order: Ordre MARKET BUY {order_id} FILLED via REST. Mise à jour état immédiate.")
+            try:
+                exec_qty = float(order_result.get('executedQty', 0))
+                quote_qty = float(order_result.get('cummulativeQuoteQty', 0))
+                if exec_qty > 0:
+                    avg_price = quote_qty / exec_qty
+                    entry_timestamp = order_result.get('transactTime', int(time.time() * 1000))
+
+                    state_updates = {
+                        "in_position": True,
+                        "entry_details": {
+                            "order_id": order_id, "avg_price": avg_price,
+                            "quantity": exec_qty, "timestamp": entry_timestamp,
+                        },
+                        "open_order_id": None, # Clear any previous open order ID
+                        "open_order_timestamp": None,
+                    }
+
+                    logger.debug(f"API /place_order: Attempting state_manager.update_state...")
+                    update_start = time.monotonic()
+                    state_manager.update_state(state_updates)
+                    update_duration = time.monotonic() - update_start
+                    logger.debug(f"API /place_order: state_manager.update_state finished (took {update_duration:.4f}s).")
+
+                    # Save persistent data *after* state update
+                    logger.debug(f"API /place_order: Attempting state_manager.save_persistent_data (for state)...")
+                    save_start = time.monotonic()
+                    state_manager.save_persistent_data()
+                    save_duration = time.monotonic() - save_start
+                    logger.debug(f"API /place_order: state_manager.save_persistent_data finished (took {save_duration:.4f}s).")
+
+                    # Broadcast the state update in a separate thread
+                    logger.debug(f"API /place_order: Starting state broadcast thread...")
+                    broadcast_thread = threading.Thread(target=broadcast_state_update, daemon=True)
+                    broadcast_thread.start()
+                    logger.debug(f"API /place_order: State broadcast thread started.")
+
+                    logger.info(f"API /place_order: État mis à jour (via REST): EN POSITION @ {avg_price:.4f}, Qty={exec_qty}")
+                else:
+                    logger.warning(f"API /place_order: Ordre MARKET BUY {order_id} FILLED via REST mais quantité nulle?")
+            except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
+                logger.error(f"API /place_order: Erreur traitement MARKET FILLED via REST {order_id}: {e}", exc_info=True)
+        # --- End Specific Handling ---
+
+        # Return success response with order details
+        total_request_time = time.monotonic() - request_start_time
+        logger.debug(f"API /place_order: Preparing to return JSON response (Total time: {total_request_time:.4f}s)...")
+        return jsonify({"success": True, "message": f"Requête d'ordre {order_id} envoyée. Statut API: {order_status}", "order_details": order_result}), 200
 
     except Exception as e:
         logger.exception("API /place_order: Erreur inattendue lors de l'appel à place_order.")

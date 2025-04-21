@@ -18,7 +18,7 @@ from config_manager import config_manager
 # Import strategy logic and client wrapper
 import strategy
 import binance_client_wrapper
-# Import bot_core for execute_exit and order management
+# Import bot_core for execute_exit, order management, AND history refresh
 import bot_core
 
 logger = logging.getLogger(__name__)
@@ -320,11 +320,18 @@ def _handle_execution_report(data: dict):
 
     logger.info(f"Execution Report: OrderID={order_id}, Status={status}, Side={side}, Type={order_type}")
 
-    # Update order history via StateManager
-    # This also handles broadcasting the history update
-    state_manager.add_order_to_history(data)
+    # --- *** MODIFIED: Trigger history refresh via REST in background *** ---
+    if symbol:
+        logger.debug(f"ExecutionReport: Triggering history refresh for {symbol} via REST...")
+        # Run the refresh in a background thread
+        threading.Thread(target=bot_core.refresh_order_history_via_rest, args=(symbol, 50), daemon=True).start()
+    else:
+        logger.warning("ExecutionReport: Cannot trigger history refresh, symbol missing in data.")
+    # --- *** END MODIFIED *** ---
 
     # --- Update Core Bot State Based on Order Status ---
+    # This logic is still useful for updating the 'in_position' status based on WS confirmation
+    # It acts as a fallback/confirmation if the REST update was missed or state diverged.
     state_updates = {}
     current_state = state_manager.get_state() # Get current state for checks
 
@@ -335,10 +342,9 @@ def _handle_execution_report(data: dict):
         state_updates["open_order_timestamp"] = None
 
     # Update position state ONLY if the order is FILLED
-    # Avoid double-updating if already handled by REST API response in api_routes
     if status == 'FILLED':
         if side == 'BUY' and not current_state.get("in_position"):
-            # Enter position based on WS confirmation (if not already set by REST)
+            # Enter position based on WS confirmation (redundant if REST worked, but safe)
             try:
                 exec_qty = float(data.get('z', 0)) # Cumulative filled quantity
                 quote_qty = float(data.get('Z', 0)) # Cumulative quote asset transacted amount
@@ -352,7 +358,7 @@ def _handle_execution_report(data: dict):
                         "order_id": order_id, "avg_price": avg_price,
                         "quantity": exec_qty, "timestamp": entry_timestamp,
                     }
-                    # Save persistent state for entry
+                    # Save persistent state for entry (redundant if REST worked, but safe)
                     state_manager.save_persistent_data()
                 else:
                      logger.warning(f"ExecutionReport: BUY order {order_id} FILLED but executed quantity is zero?")
@@ -364,13 +370,13 @@ def _handle_execution_report(data: dict):
             logger.info(f"ExecutionReport: Exiting position via WS confirmation for order {order_id}.")
             state_updates["in_position"] = False
             state_updates["entry_details"] = None
-            # Save persistent state for exit
+            # Save persistent state for exit (redundant if REST worked, but safe)
             state_manager.save_persistent_data()
 
     # Apply state updates if any were determined
     if state_updates:
         state_manager.update_state(state_updates)
-        broadcast_state_update() # Broadcast the state change
+        broadcast_state_update() # Broadcast the state change (position, open order ID)
 
 
 def _handle_account_position(data: dict):

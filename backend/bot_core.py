@@ -1,11 +1,11 @@
-# /Users/davidmichels/Desktop/trading-bot/backend/bot_core.py
+ # /Users/davidmichels/Desktop/trading-bot/backend/bot_core.py
 import logging
 import os
 import threading
 import time
 import collections
 from decimal import Decimal, InvalidOperation
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List # Added List
 import dotenv
 import json
 
@@ -17,7 +17,7 @@ from binance.error import ClientError, ServerError
 # --- Imports ---
 from state_manager import state_manager
 from config_manager import config_manager, SYMBOL
-import binance_client_wrapper
+import binance_client_wrapper # Ensure it's imported
 import strategy # Assuming strategy.py contains format_quantity etc.
 import websocket_handlers
 from websocket_utils import broadcast_state_update
@@ -141,8 +141,10 @@ def _handle_exit_order_result(
 
     logger.info(f"execute_exit: Result for SELL order {order_id}: Status={status}")
 
-    # Add/Update order in history regardless of status for tracking
-    state_manager.add_order_to_history(order_details)
+    # --- REMOVED REDUNDANT CALL ---
+    # History update is now triggered by refresh_order_history_via_rest
+    # state_manager.add_order_to_history(order_details)
+    # --- END REMOVED ---
 
     # Update core state only if the order is confirmed filled (fully or partially)
     if status in ["FILLED", "PARTIALLY_FILLED"]:
@@ -150,24 +152,13 @@ def _handle_exit_order_result(
         logger.info(f"execute_exit: SELL order {order_id} confirmed {status}. Updating state: Exiting position.")
         state_updates["in_position"] = False
         state_updates["entry_details"] = None
-        # symbol_quantity should ideally be updated via 'outboundAccountPosition' WS event,
-        # but we could force it to 0 here if needed, though less accurate.
-        # state_updates["symbol_quantity"] = 0.0
         should_save = True # Save state change
     elif status == "NEW":
-        # For LIMIT orders, just log and wait for WS update
         logger.warning(f"execute_exit: SELL LIMIT order {order_id} opened. Waiting for fill/cancel via WebSocket.")
-        # We might want to store this open_order_id if we implement timeout logic for exits
-        # state_updates["open_order_id"] = order_id
-        # state_updates["open_order_timestamp"] = order_details.get("transactTime")
+        # Store open order ID if needed for timeout logic (already handled in place_scalping_order if applicable)
     elif status in ["CANCELED", "REJECTED", "EXPIRED", "UNKNOWN_OR_ALREADY_COMPLETED"]:
         logger.warning(f"execute_exit: SELL order {order_id} failed/expired/cancelled (Status={status}). State 'in_position' remains True.")
-        # If an open exit order failed, clear the open order ID
-        # if state_manager.get_state("open_order_id") == order_id:
-        #     state_updates["open_order_id"] = None
-        #     state_updates["open_order_timestamp"] = None
     else:
-        # Unexpected status
         logger.error(f"execute_exit: SELL order {order_id} has unexpected status: {status}. State not modified.")
 
     # Apply state updates if any
@@ -196,6 +187,11 @@ def execute_exit(reason: str) -> Optional[Dict[str, Any]]:
     # Handle the result (updates state, broadcasts, saves)
     _handle_exit_order_result(order_details, entry_details_copy)
 
+    # Trigger history refresh after handling the immediate result
+    if order_details and order_details.get('symbol'):
+        logger.debug(f"execute_exit: Triggering history refresh for {order_details['symbol']} via REST...")
+        threading.Thread(target=refresh_order_history_via_rest, args=(order_details['symbol'], 50), daemon=True).start()
+
     return order_details # Return the raw order details from the API call
 
 
@@ -203,7 +199,6 @@ def execute_exit(reason: str) -> Optional[Dict[str, Any]]:
 
 def place_scalping_order(order_params: Dict[str, Any]):
     """Places a scalping entry order and handles initial state updates."""
-    # This function might be called directly by the strategy logic in run_bot
     symbol = order_params.get("symbol")
     side = order_params.get("side")
     order_type = order_params.get("order_type")
@@ -221,8 +216,15 @@ def place_scalping_order(order_params: Dict[str, Any]):
         status = order_details.get("status")
         logger.info(f"Scalping Order {order_id} placed. Initial API Status: {status}")
 
-        # Add to history immediately for tracking
-        state_manager.add_order_to_history(order_details)
+        # --- REMOVED REDUNDANT CALL ---
+        # History update is now triggered by refresh_order_history_via_rest
+        # state_manager.add_order_to_history(order_details)
+        # --- END REMOVED ---
+
+        # Trigger history refresh after placing the order
+        if symbol:
+            logger.debug(f"place_scalping_order: Triggering history refresh for {symbol} via REST...")
+            threading.Thread(target=refresh_order_history_via_rest, args=(symbol, 50), daemon=True).start()
 
         if order_type == "LIMIT" and status == "NEW" and order_id:
             # Store open LIMIT order ID for potential timeout cancellation
@@ -234,9 +236,6 @@ def place_scalping_order(order_params: Dict[str, Any]):
             logger.info(f"Scalping LIMIT order {order_id} opened. Waiting for fill/cancel.")
 
         elif order_type == "MARKET" and status == "FILLED":
-            # NOTE: State update for MARKET BUY FILLED is also handled in api_routes.py
-            # This provides redundancy if place_scalping_order is called directly.
-            # Ensure logic here is consistent with api_routes.py.
             logger.info(f"Scalping MARKET order {order_id} filled according to API response.")
             try:
                 exec_qty = float(order_details.get("executedQty", 0))
@@ -255,11 +254,9 @@ def place_scalping_order(order_params: Dict[str, Any]):
                             "open_order_timestamp": None,
                         }
                         state_manager.update_state(state_updates)
-                        # History already added above
                         state_manager.save_persistent_data() # Save entry state
                         broadcast_state_update()
                         logger.info(f"Scalping MARKET: Entered position @ {avg_price:.4f}, Qty={exec_qty} (via direct call)")
-                    # Add logic for MARKET SELL if needed by strategy
                 else:
                     logger.warning("Scalping MARKET: API reported FILLED but executed quantity is zero?")
             except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
@@ -267,11 +264,8 @@ def place_scalping_order(order_params: Dict[str, Any]):
 
         elif status == "REJECTED":
             logger.error(f"Scalping Order {order_id} REJECTED by API. Reason: {order_details.get('rejectReason', 'N/A')}")
-            # History already added
         else:
-            # Handle other statuses like EXPIRED, CANCELED if needed, though less common for immediate placement
             logger.warning(f"Scalping Order {order_id} has unexpected initial status: {status}")
-            # History already added
     else:
         logger.error(f"Failed to place scalping order (API returned None): {order_params}")
 
@@ -284,8 +278,16 @@ def cancel_scalping_order(symbol: str, order_id: int):
     if result:
         status = result.get("status")
         logger.info(f"API Cancel Result for order {order_id}: Status={status}")
-        # Update history with cancellation details
-        state_manager.add_order_to_history(result)
+
+        # --- REMOVED REDUNDANT CALL ---
+        # History update is now triggered by refresh_order_history_via_rest
+        # state_manager.add_order_to_history(result)
+        # --- END REMOVED ---
+
+        # Trigger history refresh after attempting cancellation
+        logger.debug(f"cancel_scalping_order: Triggering history refresh for {symbol} via REST...")
+        threading.Thread(target=refresh_order_history_via_rest, args=(symbol, 50), daemon=True).start()
+
         # Clear open order state if cancellation confirmed or order already done
         if status in ["CANCELED", "UNKNOWN_OR_ALREADY_COMPLETED"]:
             current_open_order = state_manager.get_state("open_order_id")
@@ -294,7 +296,6 @@ def cancel_scalping_order(symbol: str, order_id: int):
                 broadcast_state_update()
     else:
         logger.error(f"Failed API request to cancel order {order_id}.")
-
 
 # --- Main Bot Thread ---
 
@@ -398,6 +399,30 @@ def run_keepalive():
     if current_thread_ref == threading.current_thread():
          state_manager.update_state({"keepalive_thread": None})
 
+# --- ADDED: Function to Refresh History via REST ---
+def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 50):
+    """Fetches recent order history via REST API and updates StateManager."""
+    if not symbol:
+        symbol = state_manager.get_state("symbol") # Get current symbol if not provided
+    if not symbol:
+        logger.error("refresh_order_history_via_rest: Cannot refresh, symbol not available.")
+        return
+
+    logger.info(f"Refreshing order history for {symbol} via REST API (limit={limit})...")
+    try:
+        # Call the new wrapper function
+        all_orders_data = binance_client_wrapper.get_all_orders(symbol=symbol, limit=limit)
+
+        if all_orders_data is None: # Wrapper handles errors and returns None on failure
+            logger.error("Failed to fetch order history via REST.")
+            return
+
+        # Call StateManager to replace the internal history and broadcast
+        state_manager.replace_order_history(all_orders_data)
+        logger.info(f"Order history for {symbol} refreshed successfully via REST.")
+
+    except Exception as e:
+        logger.error(f"Error during REST order history refresh: {e}", exc_info=True)
 
 # --- Control Functions (Start/Stop Orchestration) ---
 
@@ -950,6 +975,6 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
 # --- Exports ---
 __all__ = [
     'execute_exit', 'run_bot', 'start_bot_core', 'stop_bot_core',
-    'place_scalping_order', 'cancel_scalping_order'
+    'place_scalping_order', 'cancel_scalping_order',
+    'refresh_order_history_via_rest' # Export the new function
 ]
-

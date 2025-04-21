@@ -113,95 +113,91 @@ class StateManager:
 
     # --- Order History Management ---
 
-    def add_order_to_history(self, order_details: Dict[str, Any]):
-        """Adds or updates an order in the history (thread-safe) and broadcasts."""
-        # --- MOVED IMPORT HERE ---
-        from websocket_utils import broadcast_order_history_update
-        # --- END MOVED IMPORT ---
-
-        should_broadcast = False
-        # Use 'i' (Binance WS order ID) as fallback for 'orderId' (REST)
+    def _format_order_for_history(self, order_details: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal helper to create the simplified order dict for history."""
+        # Use 'i' (WS) as fallback for 'orderId' (REST)
         order_id_str = str(order_details.get('orderId') or order_details.get('i', 'N/A'))
+        # Use 'S' (WS) as fallback for 'side' (REST)
         order_side = order_details.get('side') or order_details.get('S')
+        # Use 'X' (WS) as fallback for 'status' (REST)
         order_status = order_details.get('status') or order_details.get('X')
-        history_before_update = [] # For logging comparison
+        performance_pct = None
 
-        with self._config_state_lock:
-            try:
-                # --- ADDED LOGGING ---
-                # Log history *before* potential modification for debugging
-                history_before_update = list(self._bot_state.get('order_history', []))
-                # --- END ADDED LOGGING ---
+        # --- Lock needed ONLY if reading self._bot_state["entry_details"] ---
+        # Let's calculate performance outside the main lock in replace_order_history
+        # to avoid holding the lock during potentially longer calculations.
+        # We'll pass the current entry_details to this function if needed.
+        # For now, let's disable performance calculation when replacing history.
+        # entry_details = self._bot_state.get("entry_details") # Get current entry details under lock
+        # if order_side == 'SELL' and order_status == 'FILLED' and entry_details:
+        #      try:
+        #          # ... (performance calculation) ...
+        #      except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
+        #          logger.warning(f"StateManager: Error calculating performance for order {order_id_str}: {e}")
 
-                entry_details = self._bot_state.get("entry_details")
-                performance_pct = None
+        simplified_order = {
+            # Prioritize REST 'updateTime' or 'time', fallback to WS 'T', then current time
+            "timestamp": order_details.get('updateTime') or order_details.get('time') or order_details.get('T') or int(time.time() * 1000),
+            "orderId": order_id_str,
+            "symbol": order_details.get('symbol') or order_details.get('s'),
+            "side": order_side,
+            # Use 'o' (WS) as fallback for 'type'/'orderType' (REST)
+            "type": order_details.get('orderType') or order_details.get('type') or order_details.get('o'),
+            # Use 'q' (WS) as fallback for 'origQty' (REST)
+            "origQty": str(order_details.get('origQty') or order_details.get('q', '0')),
+            "executedQty": str(order_details.get('executedQty') or order_details.get('z', '0')),
+            "cummulativeQuoteQty": str(order_details.get('cummulativeQuoteQty') or order_details.get('Z', '0')),
+            # Use 'p' (WS) as fallback for 'price' (REST)
+            "price": str(order_details.get('price') or order_details.get('p', '0')),
+            "status": order_status,
+            "performance_pct": None # Disabled for replace_order_history for simplicity/accuracy
+        }
+        return simplified_order
 
-                # Calculate performance only for filled SELL orders if we have entry details
-                if order_side == 'SELL' and order_status == 'FILLED' and entry_details:
-                     try:
-                         # Use 'z' (WS executed qty) as fallback for 'executedQty' (REST)
-                         # Use 'Z' (WS cummulative quote qty) as fallback for 'cummulativeQuoteQty' (REST)
-                         exit_qty = float(order_details.get('executedQty', order_details.get('z', 0)))
-                         exit_quote_qty = float(order_details.get('cummulativeQuoteQty', order_details.get('Z', 0)))
-                         entry_price = float(entry_details.get('avg_price', 0))
+    # --- METHOD TO REPLACE HISTORY ---
+    def replace_order_history(self, new_raw_history: List[Dict[str, Any]]):
+        """
+        Replaces the internal order history with data fetched from Binance API
+        and broadcasts the update.
+        """
+        # Import locally to avoid potential circular dependency issues at module level
+        from websocket_utils import broadcast_order_history_update
 
-                         if exit_qty > 0 and entry_price > 0:
-                             avg_exit_price = exit_quote_qty / exit_qty
-                             performance_pct = ((avg_exit_price / entry_price) - 1) # Simple percentage change
-                     except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
-                         logger.warning(f"StateManager: Error calculating performance for order {order_id_str}: {e}")
+        # --- Step 1: Format data OUTSIDE the lock ---
+        simplified_new_history = []
+        if isinstance(new_raw_history, list):
+             logger.debug(f"replace_order_history: Formatting {len(new_raw_history)} raw orders...")
+             for order in new_raw_history:
+                 # Format each order using the helper
+                 simplified_new_history.append(self._format_order_for_history(order))
+             logger.debug(f"replace_order_history: Formatting complete.")
+        else:
+             logger.error("replace_order_history: Received non-list data, cannot replace history.")
+             return
 
-                # Create a simplified, consistent order structure for history
-                simplified_order = {
-                    "timestamp": order_details.get('transactTime') or order_details.get('T') or int(time.time() * 1000),
-                    "orderId": order_id_str,
-                    "symbol": order_details.get('symbol') or order_details.get('s'),
-                    "side": order_side,
-                    "type": order_details.get('orderType') or order_details.get('type') or order_details.get('o'), # REST vs WS naming
-                    "origQty": str(order_details.get('origQty') or order_details.get('q', '0')), # Keep as string
-                    "executedQty": str(order_details.get('executedQty') or order_details.get('z', '0')), # Keep as string
-                    "cummulativeQuoteQty": str(order_details.get('cummulativeQuoteQty') or order_details.get('Z', '0')), # Keep as string
-                    "price": str(order_details.get('price') or order_details.get('p', '0')), # Price for LIMIT orders
-                    "status": order_status,
-                    "performance_pct": performance_pct # Will be None if not calculated
-                }
-
-                # Find if order already exists in history
-                existing_order_index = next((i for i, order in enumerate(self._bot_state['order_history']) if str(order.get('orderId')) == order_id_str), None)
-
-                if existing_order_index is not None:
-                    # Update existing order (e.g., status from NEW to FILLED)
-                    self._bot_state['order_history'][existing_order_index].update(simplified_order)
-                    logger.info(f"StateManager: Order {order_id_str} updated in history (Status: {order_status}).")
-                else:
-                    # Add new order
-                    self._bot_state['order_history'].append(simplified_order)
-                    logger.info(f"StateManager: Order {order_id_str} ({simplified_order['side']}) added to history (Status: {order_status}).")
-
-                # Sort history by timestamp (newest first) and truncate
-                self._bot_state['order_history'].sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        # --- Step 2: Acquire lock only for state modification and saving ---
+        did_save = False
+        try:
+            with self._config_state_lock:
+                logger.info(f"Replacing internal order history with {len(simplified_new_history)} formatted orders.")
+                # Sort by timestamp descending before storing/truncating
+                simplified_new_history.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+                # Truncate to max length
                 max_len = self._bot_state.get('max_history_length', 100)
-                if len(self._bot_state['order_history']) > max_len:
-                    self._bot_state['order_history'] = self._bot_state['order_history'][:max_len]
+                self._bot_state['order_history'] = simplified_new_history[:max_len]
+                # Save the newly fetched and formatted history
+                did_save = self.save_persistent_data() # Save returns True/False
+        except Exception as e:
+             logger.error(f"Error during lock acquisition or history replacement/saving: {e}", exc_info=True)
+             return # Exit if error during critical section
 
-                should_broadcast = True
-                # Save persistent data whenever history changes
-                self.save_persistent_data() # Call save method within the lock context
-
-            except Exception as e:
-                 logger.error(f"StateManager: Error adding/updating order history for {order_id_str}: {e}", exc_info=True)
-
-        # Broadcast outside the lock to avoid holding it during network I/O
-        if should_broadcast:
-            logger.info(f"EVENT:ORDER_HISTORY_UPDATED:{order_id_str}:{order_status}")
-            # --- ADDED LOGGING ---
-            # Log the history *just before* broadcasting it
-            current_history = self.get_order_history() # Get the updated history
-            logger.debug(f"Broadcasting order history update. History contains {len(current_history)} orders. First few: {current_history[:3]}")
-            # Optional: Log history before update for comparison
-            # logger.debug(f"History before update had {len(history_before_update)} orders.")
-            # --- END ADDED LOGGING ---
-            broadcast_order_history_update() # Call the imported function
+        # --- Step 3: Broadcast OUTSIDE the lock ---
+        if did_save: # Only broadcast if saving was successful (implies replacement was too)
+            logger.debug(f"Broadcasting REPLACED order history. First few: {self._bot_state['order_history'][:3]}")
+            broadcast_order_history_update()
+        else:
+            logger.error("replace_order_history: Did not broadcast history update because saving failed.")
+    # --- END METHOD TO REPLACE HISTORY ---
 
     def get_order_history(self) -> List[Dict[str, Any]]:
         """Returns a sorted copy of the order history."""
@@ -209,7 +205,6 @@ class StateManager:
             # Return a copy of the list
             history_copy = list(self._bot_state.get('order_history', []))
             return history_copy
-
     # --- Config Management ---
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
@@ -333,23 +328,20 @@ class StateManager:
 
     def save_persistent_data(self) -> bool:
         """Saves relevant state (position, history) to a JSON file."""
-        # Acquire lock to safely read the state to be saved
-        with self._config_state_lock:
-            state_to_save = {
-                "in_position": self._bot_state.get("in_position", False),
-                "entry_details": self._bot_state.get("entry_details", None),
-                # Add other persistent state variables here if needed in the future
-            }
-            # Get a copy of the history list under the lock
-            history_to_save = list(self._bot_state.get("order_history", []))
-
-        # Prepare data structure for JSON
+        # This function is called under lock by update_state and replace_order_history
+        # No need to acquire lock again here.
+        state_to_save = {
+            "in_position": self._bot_state.get("in_position", False),
+            "entry_details": self._bot_state.get("entry_details", None),
+        }
+        history_to_save = list(self._bot_state.get("order_history", []))
         data_to_save = {"state": state_to_save, "history": history_to_save}
 
-        # Perform file I/O outside the lock
+        # Perform file I/O outside the lock context if possible, but here it's called *within* a lock
+        # So we keep it simple for now. If lock contention becomes a major issue,
+        # we'd need to copy data under lock and write outside.
         try:
             with open(DATA_FILENAME, 'w') as f:
-                # Use default=str to handle potential non-serializable types gracefully
                 json.dump(data_to_save, f, indent=4, default=str)
             logger.debug(f"StateManager: Persistent data saved to {DATA_FILENAME}")
             return True
@@ -357,7 +349,6 @@ class StateManager:
             logger.error(f"StateManager: IO Error saving {DATA_FILENAME}: {e}")
             return False
         except Exception as e:
-            # Catch broader exceptions during file writing/JSON encoding
             logger.exception(f"StateManager: Error saving persistent data: {e}")
             return False
 

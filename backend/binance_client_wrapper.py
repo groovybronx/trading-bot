@@ -5,7 +5,8 @@ import threading
 import time
 import os
 import dotenv
-from typing import Optional, List, Dict,Union, Any
+# Ensure List, Dict, Any, Optional, Union are imported from typing
+from typing import Optional, List, Dict, Union, Any
 
 from binance.spot import Spot as SpotClient
 from binance.error import ClientError, ServerError
@@ -245,20 +246,16 @@ def place_order(
         # Prepare base parameters
         params = {'symbol': symbol.upper(), 'side': side.upper(), 'type': order_type.upper()}
         log_price_info = ""
-        # Get asset names for logging clarity (assuming they are set in state_manager/config)
-        # base_asset = state_manager.get_state('base_asset') or 'BASE' # Fallback names
-        # quote_asset = state_manager.get_state('quote_asset') or 'QUOTE'
+        log_qty_info = "" # Initialize qty info
 
         # Handle quantity parameter based on order type/side
         if params['type'] == 'MARKET' and params['side'] == 'BUY':
             # For MARKET BUY, quantity is the amount of QUOTE asset to spend
             params['quoteOrderQty'] = str(quantity)
-            # log_qty_info = f"{quantity} {quote_asset}" # Use actual quote asset name if available
             log_qty_info = f"{quantity} QUOTE" # Simplified log
         else:
             # For LIMIT orders (BUY/SELL) and MARKET SELL, quantity is the amount of BASE asset
             params['quantity'] = str(quantity)
-            # log_qty_info = f"{quantity} {base_asset}" # Use actual base asset name if available
             log_qty_info = f"{quantity} BASE" # Simplified log
 
 
@@ -298,7 +295,7 @@ def place_order(
     except (ClientError, ValueError) as e:
         # Handle API client errors and validation errors (like invalid price)
         error_code = getattr(e, 'error_code', None) if isinstance(e, ClientError) else None
-        error_msg = e.error_message if isinstance(e, ClientError) else str(e)
+        error_msg = getattr(e, 'error_message', str(e)) if isinstance(e, ClientError) else str(e)
         logger.error(f"place_order({symbol}, {side}, {order_type}): Client/Validation Error. Status={getattr(e, 'status_code', 'N/A')}, Code={error_code}, Msg={error_msg}")
         # Provide hints for common errors
         if error_code == -1013: logger.error(" -> Hint: Check order filters (minNotional, lotSize, priceFilter) or quantity/price precision.")
@@ -343,6 +340,56 @@ def cancel_order(symbol: str, orderId: int) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.exception(f"cancel_order({symbol}, {orderId}): Unexpected error.")
         return None
+
+# --- ADDED: Function to get all orders via REST ---
+def get_all_orders(symbol: str, limit: int = 50, retries: int = 3, delay: int = 2) -> Optional[List[Dict[str, Any]]]:
+    """
+    Retrieves recent order history for a symbol via REST API (GET /api/v3/allOrders).
+    Uses the client's all_orders method.
+    """
+    client = get_client()
+    if not client: return None
+
+    logger.debug(f"Attempting to retrieve last {limit} orders for {symbol} via REST...")
+    # Parameters for the API call
+    params = {"symbol": symbol.upper(), "limit": limit}
+
+    for attempt in range(retries):
+        try:
+            # Use the correct method name from binance-connector's Spot client
+            orders = client.get_orders(**params)
+            # Validate the response
+            if isinstance(orders, list):
+                logger.info(f"get_all_orders({symbol}): Successfully retrieved {len(orders)} orders via REST.")
+                return orders
+            else:
+                # Should not happen with a valid client call, but handle defensively
+                logger.error(f"get_all_orders({symbol}): Unexpected response type from client.all_orders: {type(orders)}.")
+                return None # Fail if response is not a list
+        except ClientError as e:
+            logger.error(f"get_all_orders({symbol}): Client Error (Attempt {attempt + 1}/{retries}). Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+            else:
+                logger.error(f"get_all_orders({symbol}): Final attempt failed after {retries} retries.")
+                return None
+        except ServerError as e:
+             logger.error(f"get_all_orders({symbol}): Server Error (Attempt {attempt + 1}/{retries}). Status={e.status_code}, Msg={str(e)}")
+             if attempt < retries - 1:
+                 time.sleep(delay)
+             else:
+                 logger.error(f"get_all_orders({symbol}): Final attempt failed after {retries} retries.")
+                 return None
+        except Exception as e:
+            # Catch any other unexpected errors during the API call
+            logger.exception(f"get_all_orders({symbol}): Unexpected error (Attempt {attempt + 1}/{retries}).")
+            if attempt < retries - 1:
+                time.sleep(delay)
+            else:
+                logger.error(f"get_all_orders({symbol}): Final attempt failed after {retries} retries.")
+                return None
+    return None # Fallback if all retries fail
+# --- END ADDED ---
 
 
 # --- User Data Stream Listen Key Management ---
@@ -479,6 +526,17 @@ if __name__ == '__main__':
             logger.info(f"-> Close {'OK' if close_ok else 'FAILED'}")
         else:
             logger.error("-> Create FAILED.")
+
+        # Add test for get_all_orders
+        logger.info(f"\nTest 6: Get All Orders ({symbol}, limit=5)")
+        recent_orders = get_all_orders(symbol, limit=5)
+        if recent_orders is not None:
+            logger.info(f"-> OK: Retrieved {len(recent_orders)} orders.")
+            # Optionally print some details
+            for order in recent_orders[:2]:
+                 logger.info(f"  - ID: {order.get('orderId')}, Status: {order.get('status')}, Time: {order.get('updateTime')}")
+        else:
+            logger.error("-> FAILED")
 
     else:
         logger.error("Test 1: Client Initialization -> FAILED")
