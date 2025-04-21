@@ -10,6 +10,19 @@
     },
     "history": [
         {
+            "timestamp": 1745270445795,
+            "orderId": "5873727",
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "type": "MARKET",
+            "origQty": "0.00011000",
+            "executedQty": "0.00011000",
+            "cummulativeQuoteQty": "9.58947660",
+            "price": "0.00000000",
+            "status": "FILLED",
+            "performance_pct": null
+        },
+        {
             "timestamp": 1745269888038,
             "orderId": "5870745",
             "symbol": "BTCUSDT",
@@ -642,19 +655,6 @@
             "origQty": "0.00011000",
             "executedQty": "0.00011000",
             "cummulativeQuoteQty": "9.38366000",
-            "price": "0.00000000",
-            "status": "FILLED",
-            "performance_pct": null
-        },
-        {
-            "timestamp": 1745022660795,
-            "orderId": "4762448",
-            "symbol": "BTCUSDT",
-            "side": "BUY",
-            "type": "MARKET",
-            "origQty": "0.01313000",
-            "executedQty": "0.01313000",
-            "cummulativeQuoteQty": "1108.05054750",
             "price": "0.00000000",
             "status": "FILLED",
             "performance_pct": null

@@ -31,14 +31,14 @@ order_data = {
     "quantity": "10",  # For MARKET BUY by quote quantity
 }
 
-# # Example 2: Market SELL - Sell 0.00011 BTC
-# # (Ensure 0.00011 BTC meets minQty and stepSize rules for BTCUSDT)
-# order_data = {
-#     "symbol": "BTCUSDT",
-#     "side": "SELL",
-#     "order_type": "MARKET",
-#     "quantity": "0.00011" # For MARKET SELL by base quantity
-# }
+# Example 2: Market SELL - Sell 0.00011 BTC
+# (Ensure 0.00011 BTC meets minQty and stepSize rules for BTCUSDT)
+order_data = {
+    "symbol": "BTCUSDT",
+    "side": "SELL",
+    "order_type": "MARKET",
+    "quantity": "0.00011" # For MARKET SELL by base quantity
+}
 
 # # Example 3: Limit BUY - Buy 0.00011 BTC if price drops to 80000 USDT
 # # (Ensure 0.00011 BTC * 80000 USDT >= minNotional)
