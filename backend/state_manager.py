@@ -193,7 +193,7 @@ class StateManager:
 
         # --- Step 3: Broadcast OUTSIDE the lock ---
         if did_save: # Only broadcast if saving was successful (implies replacement was too)
-            logger.debug(f"Broadcasting REPLACED order history. First few: {self._bot_state['order_history'][:3]}")
+            #logger.debug(f"Broadcasting REPLACED order history. First few: {self._bot_state['order_history'][:3]}")
             broadcast_order_history_update()
         else:
             logger.error("replace_order_history: Did not broadcast history update because saving failed.")
@@ -343,7 +343,7 @@ class StateManager:
         try:
             with open(DATA_FILENAME, 'w') as f:
                 json.dump(data_to_save, f, indent=4, default=str)
-            logger.debug(f"StateManager: Persistent data saved to {DATA_FILENAME}")
+            #logger.debug(f"StateManager: Persistent data saved to {DATA_FILENAME}")
             return True
         except IOError as e:
             logger.error(f"StateManager: IO Error saving {DATA_FILENAME}: {e}")

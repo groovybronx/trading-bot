@@ -648,7 +648,7 @@ def _handle_websocket_message(ws_client_instance, raw_msg: str):
     Callback for all WebSocket messages (Combined Stream).
     Decodes JSON, extracts data, and routes to specific handlers.
     """
-    logger.debug(f"Raw Combined WS message received: {raw_msg}") # Keep commented unless deep debugging needed
+    #logger.debug(f"Raw Combined WS message received: {raw_msg}") # Keep commented unless deep debugging needed
 
     try:
         combined_data = json.loads(raw_msg)
@@ -759,8 +759,8 @@ def _start_websockets() -> bool:
             on_message=_handle_websocket_message,
             on_close=lambda *args: logger.info("WebSocket Client: Connection closed."),
             on_error=lambda _, e: logger.error(f"WebSocket Client: Error: {e}"),
-            on_ping=lambda *args: logger.debug("WebSocket Client: Ping received"),
-            on_pong=lambda *args: logger.debug("WebSocket Client: Pong received"),
+            #on_ping=lambda *args: logger.debug("WebSocket Client: Ping received"),
+            #on_pong=lambda *args: logger.debug("WebSocket Client: Pong received"),
             is_combined=True # Explicitly True
         )
         state_manager.update_state({"websocket_client": ws_client})

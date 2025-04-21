@@ -3,9 +3,8 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // --- Configuration ---
-    // Assurez-vous que cela pointe vers l'adresse et le PORT de votre backend Flask
     const API_BASE_URL = `http://${window.location.hostname}:5000`;
-    const WS_URL = `ws://${window.location.hostname}:5000/ws_logs`;// URL pour WebSocket
+    const WS_URL = `ws://${window.location.hostname}:5000/ws_logs`;
 
     // --- DOM Element References ---
     const statusValue = document.getElementById('status-value');
@@ -14,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const timeframeValue = document.getElementById('timeframe-value');
     const balanceValue = document.getElementById('balance-value');
     const quantityValue = document.getElementById('quantity-value');
-    const priceValue = document.getElementById('current-price'); // Corrected ID reference
+    const priceValue = document.getElementById('current-price');
     const positionValue = document.getElementById('position-value');
     const quoteAssetLabel = document.getElementById('quote-asset-label');
     const baseAssetLabel = document.getElementById('base-asset-label');
@@ -59,11 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatNumber(num, decimals = 8) {
         const number = parseFloat(num);
         if (isNaN(number) || num === null || num === undefined) return 'N/A';
-        // Adjust decimals based on magnitude for better readability
         if (Math.abs(number) > 1000) decimals = 2;
         else if (Math.abs(number) > 10) decimals = 4;
         else if (Math.abs(number) > 0.1) decimals = 6;
-        // Use Intl.NumberFormat for locale-aware formatting (optional but good practice)
         try {
             return number.toLocaleString(undefined, {
                 minimumFractionDigits: decimals,
@@ -71,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         } catch (e) {
             console.error("Error formatting number:", num, e);
-            return number.toFixed(decimals); // Fallback to simple toFixed
+            return number.toFixed(decimals);
         }
     }
 
@@ -80,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const date = new Date(parseInt(timestamp));
             if (isNaN(date.getTime())) return 'Invalid Date';
-            return date.toLocaleString(); // Format based on user's locale
+            return date.toLocaleString();
         } catch (e) {
             console.error("Error formatting timestamp:", timestamp, e);
             return 'Invalid Date';
@@ -93,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
             scalpingParamsDiv.style.display = 'block';
             paramTimeframe.disabled = true;
             timeframeRelevance.textContent = '(Non pertinent pour SCALPING)';
-        } else { // Default to SWING or other future strategies
+        } else {
             swingParamsDiv.style.display = 'block';
             scalpingParamsDiv.style.display = 'none';
             paramTimeframe.disabled = false;
@@ -102,20 +99,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Log Appending Function ---
-    function appendLog(message, level = 'log') { // level can be 'log', 'info', 'error', 'warn'
+    function appendLog(message, level = 'log') {
         if (!logOutput) {
             console.error("logOutput element not found!");
             return;
         }
         const logEntry = document.createElement('div');
-        // Use textContent for safety against XSS if messages could contain HTML
         logEntry.textContent = message;
-        logEntry.className = `log-entry log-${level}`; // Add classes for styling
+        logEntry.className = `log-entry log-${level}`;
         logOutput.appendChild(logEntry);
-        // Auto-scroll to the bottom
         logOutput.scrollTop = logOutput.scrollHeight;
     }
 
+    // --- Factorized Price Update Function ---
+    function updatePriceDisplay(tickerData) {
+        let displayPrice = 'N/A';
+        if (tickerData && tickerData.b && tickerData.a) {
+            try {
+                const bid = parseFloat(tickerData.b);
+                const ask = parseFloat(tickerData.a);
+                if (!isNaN(bid) && !isNaN(ask) && ask > 0) {
+                    const midPrice = (bid + ask) / 2;
+                    displayPrice = formatNumber(midPrice, 2);
+                } else if (!isNaN(bid)) {
+                    displayPrice = formatNumber(bid, 2); // Fallback to bid
+                }
+            } catch (e) {
+                console.error("Error parsing ticker price:", e, tickerData);
+                displayPrice = "Erreur";
+            }
+        }
+        if (priceValue) {
+            priceValue.textContent = displayPrice;
+        } else {
+            console.warn("Element with ID 'current-price' not found for price update.");
+        }
+    }
 
     // --- WebSocket Logic ---
     function connectWebSocket() {
@@ -130,15 +149,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onopen = () => {
             console.log('WebSocket connection established');
             appendLog("WebSocket connecté.", "info");
-            // Request initial state upon connection (API call)
             fetchBotState();
-            // Note: Initial history is sent by backend upon connection via WS now
         };
 
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                console.debug('WebSocket message received:', data); // Keep for debugging
+                // console.debug('WebSocket message received:', data); // Keep commented unless debugging
 
                 switch (data.type) {
                     case 'log':
@@ -147,27 +164,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     case 'info':
                         appendLog(data.message, 'info');
                         break;
-                    case 'error': // Specific error message from backend
+                    case 'error':
                         appendLog(`ERREUR Backend: ${data.message}`, 'error');
                         break;
-                    case 'warning': // Use appendLog consistently
+                    case 'warning':
                         appendLog(data.message, 'warn');
                         break;
-                    case 'critical': // Use appendLog consistently
-                        appendLog(`CRITICAL: ${data.message}`, 'error'); // Treat critical as error visually
+                    case 'critical':
+                        appendLog(`CRITICAL: ${data.message}`, 'error');
                         break;
                     case 'status_update':
                         if (data.state) {
-                            console.log("Status Update Received:", data.state); // Debug log
-                            updateUI(data.state);
-                            // appendLog("État du bot mis à jour.", "info"); // Can be noisy
+                            // console.log("Status Update Received:", data.state); // Keep commented unless debugging
+                            updateUI(data.state); // Updates non-price elements
+                            updatePriceDisplay(data.state.latest_book_ticker); // Updates price
                         } else {
                             console.warn("Received status_update without state data:", data);
                         }
                         break;
+                    case 'ticker_update': // Handles lightweight ticker updates
+                        // console.debug("Ticker Update Received:", data.ticker); // Keep commented unless debugging
+                        updatePriceDisplay(data.ticker); // Updates only price
+                        break;
                     case 'order_history_update':
                         if (data.history) {
-                            console.log("Order History Update Received:", data.history); // Debug log
+                            // console.log("Order History Update Received:", data.history); // Keep commented unless debugging
                             updateOrderHistory(data.history);
                             appendLog("Historique des ordres mis à jour.", "info");
                         } else {
@@ -175,7 +196,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         break;
                     case 'ping':
-                        // console.debug('WebSocket ping received'); // Ignore ping
+                        // Server might send pings, client usually handles pongs automatically
+                        // If explicit pong is needed: ws.send(JSON.stringify({ type: 'pong' }));
                         break;
                     default:
                         console.warn('Unknown WebSocket message type received:', data);
@@ -195,25 +217,28 @@ document.addEventListener('DOMContentLoaded', () => {
             statusValue.className = 'status-error';
             stopBotBtn.disabled = true;
             startBotBtn.disabled = false;
-            ws = null; // Reset ws variable
+            ws = null;
         };
 
         ws.onclose = (event) => {
+            const wasConnected = !!ws; // Check if ws was non-null before resetting
+            ws = null; // Reset ws variable FIRST
             console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
-            // Only log warning if closure was unexpected
-            if (ws && event.code !== 1000 && event.code !== 1001) {
-                 appendLog(`Connexion WebSocket fermée (Code: ${event.code}). Tentative de reconnexion possible.`, 'warn');
-            } else if (!ws) { // If ws is already null, it was likely intentional or handled by onerror
-                 appendLog(`Connexion WebSocket fermée.`, 'info');
-            }
+
             // Update UI to reflect disconnected state
             statusValue.textContent = 'Déconnecté';
-            statusValue.className = 'status-stopped'; // Use 'stopped' style for disconnected
+            statusValue.className = 'status-stopped';
             stopBotBtn.disabled = true;
-            startBotBtn.disabled = false; // Allow attempting to reconnect via start
-            ws = null; // Reset ws variable
-            // Optional: Implement automatic reconnection logic here if desired
-            // setTimeout(connectWebSocket, 5000); // Be careful with infinite loops
+            startBotBtn.disabled = false;
+
+            // Only log warning and attempt reconnect if closure was unexpected
+            if (wasConnected && event.code !== 1000 && event.code !== 1001) { // 1000 = Normal, 1001 = Going Away
+                 appendLog(`Connexion WebSocket fermée (Code: ${event.code}). Tentative de reconnexion dans 5s...`, 'warn');
+                 // Simple reconnect attempt after 5 seconds
+                 setTimeout(connectWebSocket, 5000); // ADDED RECONNECTION ATTEMPT
+            } else {
+                 appendLog(`Connexion WebSocket fermée.`, 'info');
+            }
         };
     }
 
@@ -224,67 +249,44 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn("updateUI called with null or undefined state");
             return;
         }
-        console.log("Updating UI with state:", state); // Keep this debug log
+        // console.log("Updating UI with state:", state); // Keep commented unless debugging
 
         // Update Bot Status section
         statusValue.textContent = state.status || 'Inconnu';
-        // Apply CSS class based on status
         statusValue.className = `status-${(state.status || 'unknown').toLowerCase()}`;
-        strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A'; // Use optional chaining
+        strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
         symbolValue.textContent = state.symbol || 'N/A';
         timeframeValue.textContent = state.timeframe || 'N/A';
         quoteAssetLabel.textContent = state.quote_asset || 'USDT';
         baseAssetLabel.textContent = state.base_asset || 'N/A';
         symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
-        balanceValue.textContent = formatNumber(state.available_balance, 2); // Format quote balance
-        quantityValue.textContent = formatNumber(state.symbol_quantity, 8); // Format base quantity
+        balanceValue.textContent = formatNumber(state.available_balance, 2);
+        quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
 
-        // --- Update current price using latest_book_ticker ---
-        let displayPrice = 'N/A';
-        if (state.latest_book_ticker && state.latest_book_ticker.b && state.latest_book_ticker.a) {
-            try {
-                const bid = parseFloat(state.latest_book_ticker.b);
-                const ask = parseFloat(state.latest_book_ticker.a);
-                if (!isNaN(bid) && !isNaN(ask) && ask > 0) { // Ensure ask is positive for mid-price calc
-                    // Display mid-price with appropriate precision
-                    const midPrice = (bid + ask) / 2;
-                    displayPrice = formatNumber(midPrice, 2); // Use formatNumber for consistency
-                } else if (!isNaN(bid)) {
-                    displayPrice = formatNumber(bid, 2); // Fallback to bid if ask is invalid
-                }
-            } catch (e) {
-                console.error("Error parsing ticker price:", e, state.latest_book_ticker);
-                displayPrice = "Erreur";
-            }
-        }
-        priceValue.textContent = displayPrice;
-        // --- End Price Update ---
+        // Price update is now handled by updatePriceDisplay called from onmessage
 
         // Update Position Status
         if (state.in_position && state.entry_details) {
-            const entryPrice = formatNumber(state.entry_details.avg_price, 2); // Format entry price
-            const entryQty = formatNumber(state.entry_details.quantity, 8); // Format entry quantity
+            const entryPrice = formatNumber(state.entry_details.avg_price, 2);
+            const entryQty = formatNumber(state.entry_details.quantity, 8);
             positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
-            positionValue.className = 'status-running'; // Use 'running' style for active position
+            positionValue.className = 'status-running';
         } else {
             positionValue.textContent = 'Aucune';
-            positionValue.className = ''; // Reset class
+            positionValue.className = '';
         }
 
-        // Update Control Buttons state based on bot status
+        // Update Control Buttons state
         startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING';
         stopBotBtn.disabled = state.status !== 'RUNNING';
 
-        // Update Parameter Inputs if config is present
+        // Update Parameter Inputs
         if (state.config) {
-            // Only update inputs if the bot is NOT running to avoid overwriting user changes
-            // Or, alternatively, always update to reflect the backend's current config
-            // Let's always update for now to ensure consistency
             strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
             updateParameterVisibility(strategySelector.value);
 
             // SWING Params
-            paramTimeframe.value = state.config.TIMEFRAME_STR || '1m'; // Default to 1m if missing
+            paramTimeframe.value = state.config.TIMEFRAME_STR || '1m';
             paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
             paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
             paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
@@ -311,65 +313,56 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error("Order history table body not found!");
             return;
         }
-        orderHistoryBody.innerHTML = ''; // Clear existing rows
+        orderHistoryBody.innerHTML = '';
 
-        console.log("Updating order history table with data:", history); // Keep this debug log
+        // console.log("Updating order history table with data:", history); // Keep commented unless debugging
 
         if (!Array.isArray(history) || history.length === 0) {
-            // Use placeholder template if available
             if (orderHistoryPlaceholder) {
                  try {
                     const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true);
                     orderHistoryBody.appendChild(placeholderClone);
                  } catch (e) {
                      console.error("Error using order history placeholder template:", e);
-                     // Fallback if template fails
                      const row = orderHistoryBody.insertRow();
                      const cell = row.insertCell();
-                     cell.colSpan = 10; // Adjust to number of columns
+                     cell.colSpan = 10;
                      cell.textContent = "Aucun ordre dans l'historique.";
                      cell.style.textAlign = 'center';
                  }
             } else {
-                 // Fallback if placeholder template ID is wrong or missing
                  const row = orderHistoryBody.insertRow();
                  const cell = row.insertCell();
-                 cell.colSpan = 10; // Adjust to number of columns
+                 cell.colSpan = 10;
                  cell.textContent = "Aucun ordre dans l'historique.";
                  cell.style.textAlign = 'center';
             }
             return;
         }
 
-        // Sort history by timestamp descending (ensure timestamps are numbers)
         history.sort((a, b) => (parseInt(b.timestamp || 0)) - (parseInt(a.timestamp || 0)));
 
         history.forEach(order => {
-            const row = document.createElement('tr'); // Create row element
+            const row = document.createElement('tr');
 
-            // Format performance percentage
             const performancePctValue = order.performance_pct;
             const performancePctText = (performancePctValue !== null && performancePctValue !== undefined)
-                ? `${formatNumber(performancePctValue * 100, 2)}%` // Format as percentage
-                : '-'; // Use hyphen for N/A
+                ? `${formatNumber(performancePctValue * 100, 2)}%`
+                : '-';
 
-            // Calculate average price if not directly available but quantities are
-            let avgPrice = order.price; // Use order price by default (for LIMIT)
+            let avgPrice = order.price;
             const executedQtyNum = parseFloat(order.executedQty || 0);
             const cummQuoteQtyNum = parseFloat(order.cummulativeQuoteQty || 0);
 
             if ((!avgPrice || parseFloat(avgPrice) === 0) && cummQuoteQtyNum > 0 && executedQtyNum > 0) {
-                avgPrice = cummQuoteQtyNum / executedQtyNum; // Calculate average price
+                avgPrice = cummQuoteQtyNum / executedQtyNum;
             }
 
-            // Format the price/value column
-            const priceOrValueText = formatNumber(avgPrice, 4); // Format avg price with 4 decimals
+            const priceOrValueText = formatNumber(avgPrice, 4);
 
-            // Determine CSS classes for side and performance
             const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
             const perfClass = (performancePctValue === null || performancePctValue === undefined) ? '' : (performancePctValue >= 0 ? 'perf-positive' : 'perf-negative');
 
-            // Populate row using innerHTML for structure
             row.innerHTML = `
                 <td>${formatTimestamp(order.timestamp)}</td>
                 <td>${order.symbol || 'N/A'}</td>
@@ -382,7 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td class="${perfClass}">${performancePctText}</td>
                 <td>${order.orderId || 'N/A'}</td>
             `;
-            orderHistoryBody.appendChild(row); // Append the populated row
+            orderHistoryBody.appendChild(row);
         });
     }
 
@@ -397,15 +390,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 let errorMsg = `HTTP error! status: ${response.status}`;
                 try {
                     const errorResult = await response.json();
-                    errorMsg = errorResult.message || errorMsg; // Use 'message' from backend JSON
+                    errorMsg = errorResult.message || errorMsg;
                 } catch (e) { console.error("Error parsing error response:", e); }
                 throw new Error(errorMsg);
             }
             const state = await response.json();
-            // Update UI with fetched state (config, status etc.)
             updateUI(state);
-            // Note: History is now primarily updated via WebSocket push
-            // updateOrderHistory(state.order_history); // Remove this if history isn't in /status
+            // History is updated via WebSocket push
             appendLog("État initial récupéré.", "info");
         } catch (error) {
             console.error('Error fetching bot state:', error);
@@ -417,8 +408,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function startBot() {
         appendLog("Envoi de la commande Démarrer...", "info");
-        startBotBtn.disabled = true; // Disable button immediately
-        stopBotBtn.disabled = true; // Disable stop button too during start attempt
+        startBotBtn.disabled = true;
+        stopBotBtn.disabled = true;
         try {
             const response = await fetch(`${API_BASE_URL}/api/start`, { method: 'POST' });
             const result = await response.json();
@@ -426,21 +417,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             appendLog(result.message || 'Commande Démarrer envoyée.', 'info');
-            // UI state (buttons, status) will be updated via WebSocket 'status_update'
         } catch (error) {
             console.error('Error starting bot:', error);
             appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
-            startBotBtn.disabled = false; // Re-enable start button on failure
-            // Stop button state depends on whether bot was previously running or not
-            // Fetching state again might clarify, or rely on WS error state
+            startBotBtn.disabled = false;
             fetchBotState();
         }
     }
 
     async function stopBot() {
         appendLog("Envoi de la commande Arrêter...", "info");
-        stopBotBtn.disabled = true; // Disable button immediately
-        startBotBtn.disabled = true; // Disable start button too during stop attempt
+        stopBotBtn.disabled = true;
+        startBotBtn.disabled = true;
         try {
             const response = await fetch(`${API_BASE_URL}/api/stop`, { method: 'POST' });
             const result = await response.json();
@@ -448,13 +436,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             appendLog(result.message || 'Commande Arrêter envoyée.', 'info');
-            // UI state will be updated via WebSocket 'status_update'
         } catch (error) {
             console.error('Error stopping bot:', error);
             appendLog(`Erreur à l'arrêt du bot: ${error.message}`, 'error');
-            // Re-enable stop button? Or rely on WS update? Let's rely on WS.
-            // If WS fails, user might need to refresh.
-            fetchBotState(); // Fetch state to try and sync UI
+            fetchBotState();
         }
     }
 
@@ -465,7 +450,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const paramsToSend = {
             STRATEGY_TYPE: strategySelector.value,
-            // SWING Params
             TIMEFRAME_STR: paramTimeframe.value,
             EMA_SHORT_PERIOD: parseInt(paramEmaShort.value) || null,
             EMA_LONG_PERIOD: parseInt(paramEmaLong.value) || null,
@@ -478,22 +462,10 @@ document.addEventListener('DOMContentLoaded', () => {
             VOLUME_AVG_PERIOD: parseInt(paramVolumeAvg.value) || null,
             USE_EMA_FILTER: paramUseEmaFilter.checked,
             USE_VOLUME_CONFIRMATION: paramUseVolume.checked,
-            // SCALPING Params
             STOP_LOSS_PERCENTAGE: parseFloat(paramSl.value) || null,
             TAKE_PROFIT_PERCENTAGE: parseFloat(paramTp.value) || null,
             SCALPING_LIMIT_ORDER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
-            // Add other SCALPING params if they exist in the HTML form
-            // SCALPING_ORDER_TYPE: document.getElementById('param-scalping-order-type')?.value || 'MARKET',
-            // SCALPING_LIMIT_TIF: document.getElementById('param-scalping-tif')?.value || 'GTC',
-            // etc.
         };
-
-        // Optional: Clean object by removing null/empty values if backend handles missing keys better
-        // Object.keys(paramsToSend).forEach(key => {
-        //     if (paramsToSend[key] === null || paramsToSend[key] === '') {
-        //         delete paramsToSend[key];
-        //     }
-        // });
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/parameters`, {
@@ -508,20 +480,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             paramSaveStatus.textContent = result.message || 'Paramètres sauvegardés!';
             paramSaveStatus.className = 'status-success';
-            // Re-fetch state to confirm update in UI inputs immediately
-            // (Backend should broadcast the state update anyway, but this can be faster)
-            // fetchBotState(); // Optional: remove if WS update is reliable enough
         } catch (error) {
             console.error('Error saving parameters:', error);
             paramSaveStatus.textContent = `Erreur sauvegarde: ${error.message}`;
             paramSaveStatus.className = 'status-error';
         } finally {
-            // Clear status message after a delay
             setTimeout(() => {
                 paramSaveStatus.textContent = '';
                 paramSaveStatus.className = '';
             }, 5000);
-            saveParamsBtn.disabled = false; // Re-enable button
+            saveParamsBtn.disabled = false;
         }
     }
 
@@ -538,11 +506,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Initial Setup ---
-    // Set initial visibility based on the default selected strategy in HTML
     if (strategySelector) {
         updateParameterVisibility(strategySelector.value);
     }
-    // Connect WebSocket (this will also trigger fetchBotState on successful connection)
     connectWebSocket();
 
 }); // End DOMContentLoaded

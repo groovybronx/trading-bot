@@ -473,7 +473,7 @@ def calculate_indicators_and_signals(
 
     df.loc[sell_conditions, 'signal'] = 'SELL'
 
-    # logger.debug(f"calculate_indicators: Indicateurs et signaux calculés. Dernier signal: {df['signal'].iloc[-1] if not df.empty else 'N/A'}")
+    logger.debug(f"calculate_indicators: Indicateurs et signaux calculés. Dernier signal: {df['signal'].iloc[-1] if not df.empty else 'N/A'}")
     return df
 
 def check_entry_conditions(

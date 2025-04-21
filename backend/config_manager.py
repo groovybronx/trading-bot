@@ -59,7 +59,7 @@ class ConfigManager:
             "BINANCE_API_SECRET": os.getenv('ENV_API_SECRET', 'YOUR_SECRET_KEY_PLACEHOLDER'),
         }
         loaded_key = config_dict.get("BINANCE_API_KEY", "NOT_FOUND")
-        logger.debug(f"ConfigManager._load_initial_config: Clé chargée via os.getenv = '{loaded_key[:5]}...'")
+        #logger.debug(f"ConfigManager._load_initial_config: Clé chargée via os.getenv = '{loaded_key[:5]}...'")
         return config_dict
 
     def _validate_initial_config(self):
