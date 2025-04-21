@@ -1,54 +1,88 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/logging_config.py
 import logging
 import queue
+import json
+from logging.handlers import QueueHandler, QueueListener
+import sys
 
-# Queue pour envoyer les logs au frontend via SSE
-log_queue = queue.Queue()
+log_queue = queue.Queue(-1)  # Queue de logs
 
-class QueueHandler(logging.Handler):
-    """Envoie les logs (INFO et plus) à une queue pour le streaming SSE."""
-    def __init__(self, log_queue):
+# --- MODIFIÉ: WebSocketLogHandler ---
+class WebSocketLogHandler(logging.Handler):
+    """Handler qui envoie les logs aux clients WebSocket connectés."""
+    def __init__(self, clients_set):
         super().__init__()
-        self.log_queue = log_queue
+        self.clients = clients_set # Utiliser le set passé en argument
 
     def emit(self, record):
-        if record.levelno >= logging.INFO:
-            log_entry = self.format(record)
+        log_entry = self.format(record)
+        # Déterminer le niveau pour le message JSON
+        level_name = record.levelname.lower()
+        if level_name not in ['debug', 'info', 'warning', 'error', 'critical']:
+            level_name = 'log' # Fallback
+
+        message = json.dumps({"type": level_name, "message": log_entry})
+
+        # Copier pour éviter RuntimeError si le set change pendant l'itération
+        disconnected_clients = set()
+        current_clients = list(self.clients) # Utiliser la référence self.clients
+
+        for ws in current_clients:
             try:
-                self.log_queue.put_nowait(log_entry)
-            except queue.Full:
-                # Gérer le cas où la queue est pleine (rare, mais possible)
-                # Option: ignorer, logger une erreur, etc.
-                print(f"WARNING: Log queue is full. Log message dropped: {log_entry}")
+                ws.send(message)
+            except Exception:
+                # Marquer pour suppression si l'envoi échoue
+                disconnected_clients.add(ws)
+
+        # Nettoyer les clients déconnectés du set principal (partagé avec app.py)
+        for ws in disconnected_clients:
+             if ws in self.clients:
+                  self.clients.remove(ws)
 
 
-def setup_logging(log_level=logging.INFO):
-    """Configure le logging global."""
-    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+def setup_logging(log_queue, ws_log_handler): # Accepter le handler en argument
+    """Configure le système de logging."""
+    log_format = '%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s'
+    log_level = logging.DEBUG # Mettre à DEBUG pour voir tous les messages
+    formatter = logging.Formatter(log_format)
 
-    # Handler pour la console
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(log_formatter)
+    logging.basicConfig(level=log_level, format=log_format)
 
-    # Handler pour la queue SSE
+    # --- Configuration du logging vers la queue (pour WebSocket) ---
     queue_handler = QueueHandler(log_queue)
-    queue_handler.setFormatter(log_formatter)
+    # queue_handler.setLevel(logging.DEBUG) # Niveau pour les websockets
 
-    # Configurer le logger racine
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
+    
+    
+    # Attacher les handlers au logger root
+    root_logger = logging.getLogger()
+    root_logger.addHandler(queue_handler)
+    if root_logger.hasHandlers():
+        # logging.warning("Nettoyage des handlers pré-existants du root logger.")
+        for handler in root_logger.handlers[:]: # Itérer sur une copie
+            root_logger.removeHandler(handler)
+            handler.close() # Fermer le handler proprement
+    
+     # --- Créer les handlers nécessaires ---
+    # Handler Console
+    console_handler = logging.StreamHandler(sys.stdout) # Explicitement vers stdout
+    console_handler.setFormatter(formatter)
+    # console_handler.setLevel(logging.INFO) # Optionnel: Niveau spécifique pour console
 
-    # Vider les handlers existants pour éviter les doublons si setup_logging est appelé plusieurs fois
-    if logger.hasHandlers():
-        logger.handlers.clear()
+    # Handler vers la Queue (pour WebSocket)
+    queue_handler = QueueHandler(log_queue)
+    # Le niveau effectif sera celui du root logger (DEBUG)
 
-    logger.addHandler(stream_handler)
-    logger.addHandler(queue_handler)
+    # --- Créer le Listener UNIQUEMENT pour le WebSocket Handler ---
+    # Il consomme la queue et envoie seulement au ws_log_handler
+    listener = QueueListener(log_queue, ws_log_handler, respect_handler_level=True)
 
-    # Réduire la verbosité de certains loggers tiers si nécessaire
-    logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
-    logger.info("Configuration du logging terminée.")
+    # Ne pas ajouter console_handler directement au root si on utilise QueueListener
+    # root_logger.addHandler(console_handler)
 
-# Exporter la queue pour que les autres modules puissent l'utiliser (notamment api_routes)
-__all__ = ['log_queue', 'setup_logging']
+    # Démarrer le listener
+    listener.start()
+    logging.info("Logging configuré (Console + WebSocket via Queue).")
+
+    return listener # Retourner le listener pour pouvoir l'arrêter proprement

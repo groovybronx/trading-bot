@@ -1,515 +1,510 @@
+// /Users/davidmichels/Desktop/trading-bot/frontend/script.js
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Éléments du DOM
+
+    // --- Configuration ---
+    // Assurez-vous que cela pointe vers l'adresse et le PORT de votre backend Flask
+    const API_BASE_URL = `http://${window.location.hostname}:5000`;
+    const WS_URL = `ws://${window.location.hostname}:5000/ws_logs`;// URL pour WebSocket
+
+    // --- DOM Element References ---
     const statusValue = document.getElementById('status-value');
+    const strategyTypeValueSpan = document.getElementById('strategy-type-value');
     const symbolValue = document.getElementById('symbol-value');
     const timeframeValue = document.getElementById('timeframe-value');
-    const positionValue = document.getElementById('position-value');
     const balanceValue = document.getElementById('balance-value');
-    const quoteAssetLabel = document.getElementById('quote-asset-label');
     const quantityValue = document.getElementById('quantity-value');
-    const baseAssetLabel = document.getElementById('base-asset-label');
     const priceValue = document.getElementById('price-value');
+    const positionValue = document.getElementById('position-value');
+    const quoteAssetLabel = document.getElementById('quote-asset-label');
+    const baseAssetLabel = document.getElementById('base-asset-label');
     const symbolPriceLabel = document.getElementById('symbol-price-label');
-    const logOutput = document.getElementById('log-output');
-    const startBtn = document.getElementById('start-bot-btn');
-    const stopBtn = document.getElementById('stop-bot-btn');
     const orderHistoryBody = document.getElementById('order-history-body');
-    const orderHistoryPlaceholder = document.getElementById('order-history-placeholder'); // Récupérer le placeholder
-    const paramInputs = {
-        TIMEFRAME_STR: document.getElementById('param-timeframe'),
-        EMA_SHORT_PERIOD: document.getElementById('param-ema-short'),
-        EMA_LONG_PERIOD: document.getElementById('param-ema-long'),
-        EMA_FILTER_PERIOD: document.getElementById('param-ema-filter'),
-        RSI_PERIOD: document.getElementById('param-rsi-period'),
-        RSI_OVERBOUGHT: document.getElementById('param-rsi-ob'),
-        RSI_OVERSOLD: document.getElementById('param-rsi-os'),
-        RISK_PER_TRADE: document.getElementById('param-risk'),
-        CAPITAL_ALLOCATION: document.getElementById('param-capital-allocation'),
-        VOLUME_AVG_PERIOD: document.getElementById('param-volume-avg'),
-        USE_EMA_FILTER: document.getElementById('param-use-ema-filter'),
-        USE_VOLUME_CONFIRMATION: document.getElementById('param-use-volume'),
-    };
+    const orderHistoryPlaceholder = document.getElementById('order-history-placeholder');
+    const logOutput = document.getElementById('log-output'); // Utiliser log-output au lieu de logOutput
+    const startBotBtn = document.getElementById('start-bot-btn');
+    const stopBotBtn = document.getElementById('stop-bot-btn');
     const saveParamsBtn = document.getElementById('save-params-btn');
     const paramSaveStatus = document.getElementById('param-save-status');
 
-    // État initial
-    statusValue.textContent = 'Chargement...';
-    statusValue.style.color = 'orange';
-    logOutput.textContent = 'Initialisation du frontend...';
-    startBtn.disabled = true;
-    stopBtn.disabled = true;
+    // Parameter Inputs
+    const strategySelector = document.getElementById('param-strategy-type');
+    const swingParamsDiv = document.getElementById('swing-params');
+    const scalpingParamsDiv = document.getElementById('scalping-params');
+    const timeframeRelevance = document.getElementById('timeframe-relevance');
 
-    // --- Communication avec le Backend ---
-    const API_BASE_URL = 'http://127.0.0.1:5000'; // Ou l'URL de votre backend
+    // SWING Params
+    const paramTimeframe = document.getElementById('param-timeframe');
+    const paramEmaShort = document.getElementById('param-ema-short');
+    const paramEmaLong = document.getElementById('param-ema-long');
+    const paramEmaFilter = document.getElementById('param-ema-filter');
+    const paramRsiPeriod = document.getElementById('param-rsi-period');
+    const paramRsiOb = document.getElementById('param-rsi-ob');
+    const paramRsiOs = document.getElementById('param-rsi-os');
+    const paramRisk = document.getElementById('param-risk');
+    const paramCapitalAllocation = document.getElementById('param-capital-allocation');
+    const paramVolumeAvg = document.getElementById('param-volume-avg');
+    const paramUseEmaFilter = document.getElementById('param-use-ema-filter');
+    const paramUseVolume = document.getElementById('param-use-volume');
 
-    // --- Connexion au flux de logs SSE ---
-    let evtSource = null;
-    function connectLogStream() {
-        if (evtSource && evtSource.readyState !== EventSource.CLOSED) {
-            evtSource.close();
-            console.log("Ancienne connexion SSE fermée.");
+    // SCALPING Params
+    const paramSl = document.getElementById('param-sl');
+    const paramTp = document.getElementById('param-tp');
+    const paramLimitTimeout = document.getElementById('param-limit-timeout');
+
+    let ws = null; // WebSocket connection
+
+    // --- Helper Functions ---
+
+    function formatNumber(num, decimals = 8) {
+        const number = parseFloat(num);
+        if (isNaN(number) || num === null || num === undefined) return 'N/A';
+        // Adjust decimals based on magnitude for better readability
+        if (Math.abs(number) > 1000) decimals = 2;
+        else if (Math.abs(number) > 10) decimals = 4;
+        else if (Math.abs(number) > 0.1) decimals = 6;
+        // Use Intl.NumberFormat for locale-aware formatting (optional but good practice)
+        return number.toLocaleString(undefined, {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+        // return number.toFixed(decimals); // Alternative simple
+    }
+
+    function formatTimestamp(timestamp) {
+        if (!timestamp) return 'N/A';
+        try {
+            const date = new Date(parseInt(timestamp));
+            if (isNaN(date.getTime())) return 'Invalid Date';
+            return date.toLocaleString(); // Format based on user's locale
+        } catch (e) {
+            console.error("Error formatting timestamp:", timestamp, e);
+            return 'Invalid Date';
         }
-        addLogDirect("Tentative de connexion au flux de logs...");
-        evtSource = new EventSource(`${API_BASE_URL}/stream_logs`);
+    }
 
-        evtSource.onopen = function() {
-            console.log("Connexion SSE ouverte.");
-            addLogDirect("Connecté au flux de logs du backend."); // Message de confirmation
+    function updateParameterVisibility(selectedStrategy) {
+        if (selectedStrategy === 'SCALPING') {
+            swingParamsDiv.style.display = 'none';
+            scalpingParamsDiv.style.display = 'block';
+            paramTimeframe.disabled = true;
+            timeframeRelevance.textContent = '(Non pertinent pour SCALPING)';
+        } else { // Default to SWING or other future strategies
+            swingParamsDiv.style.display = 'block';
+            scalpingParamsDiv.style.display = 'none';
+            paramTimeframe.disabled = false;
+            timeframeRelevance.textContent = '(Pertinent pour SWING)';
+        }
+    }
+
+    // --- Log Appending Function ---
+    function appendLog(message, level = 'log') { // level can be 'log', 'info', 'error', 'warn'
+        if (!logOutput) {
+            console.error("logOutput element not found!");
+            return;
+        }
+        const logEntry = document.createElement('div');
+        // Utiliser textContent est plus sûr que innerHTML pour les messages venant de l'extérieur
+        logEntry.textContent = message;
+        logEntry.className = `log-entry log-${level}`; // Add classes for styling
+        logOutput.appendChild(logEntry);
+        // Auto-scroll to the bottom
+        logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+
+    // --- WebSocket Logic ---
+    function connectWebSocket() {
+        if (ws) {
+            console.warn("WebSocket connection already exists or is connecting.");
+            return;
+        }
+        console.log(`Attempting to connect WebSocket to: ${WS_URL}`);
+        appendLog("Tentative de connexion au backend...", "info");
+        ws = new WebSocket(WS_URL);
+
+        ws.onopen = () => {
+            console.log('WebSocket connection established');
+            // Ne pas effacer les logs précédents, juste ajouter un message de connexion
+            appendLog("WebSocket connecté.", "info");
+            // Request initial state upon connection
+            fetchBotState();
         };
 
-        // --- MODIFICATION ICI: Gestion des messages SSE ---
-        evtSource.onmessage = function(event) {
-            const messageData = event.data;
+        ws.onmessage = (event) => {
+            try {
+                // Le backend envoie maintenant du JSON
+                const data = JSON.parse(event.data);
+                // console.debug('WebSocket message received:', data); // Décommenter pour debug détaillé
 
-            // Vérifier si c'est l'événement spécial pour l'historique
-            if (messageData === "EVENT:ORDER_HISTORY_UPDATED") {
-                console.log("Received order history update event via SSE.");
-                addLogFromJS("Événement de mise à jour de l'historique reçu, rafraîchissement...");
-                fetchOrderHistory(); // Déclencher le rafraîchissement de l'historique
+                // --- MODIFIÉ: Gérer les types de messages JSON ---
+                switch (data.type) {
+                    case 'log':
+                        appendLog(data.message, 'log'); // Niveau 'log' par défaut
+                        break;
+                    case 'info':
+                        appendLog(data.message, 'info'); // Niveau 'info'
+                        break;
+                    case 'error': // Erreur spécifique envoyée par le backend
+                        appendLog(`ERREUR Backend: ${data.message}`, 'error');
+                        break;
+                    case 'warning': // <<< CHECK THIS CASE
+                        addLogMessage(data.message, 'warning');
+                        break;
+                    case 'critical': // <<< CHECK THIS CASE (often handled like error)
+                        addLogMessage(data.message, 'error');
+                        break;
+                    
+                    case 'status_update':
+                        // Mettre à jour l'UI avec l'état reçu
+                        if (data.state) {
+                            updateUI(data.state);
+                            appendLog("État du bot mis à jour.", "info");
+                        } else {
+                            console.warn("Received status_update without state data:", data);
+                        }
+                        break;
+                    case 'order_history_update':
+                        // Mettre à jour le tableau de l'historique des ordres
+                        if (data.history) {
+                            updateOrderHistory(data.history);
+                            appendLog("Historique des ordres mis à jour.", "info");
+                        } else {
+                            console.warn("Received order_history_update without history data:", data);
+                        }
+                        break;
+                    case 'ping':
+                        // C'est le message keep-alive, on peut l'ignorer
+                        // console.debug('WebSocket ping received');
+                        break;
+                    default:
+                        // Type de message inconnu
+                        console.warn('Message WebSocket de type inconnu reçu:', data);
+                        appendLog(`[WS Type Inconnu: ${data.type}] ${JSON.stringify(data.message || data.payload || data)}`, 'warn');
+                }
+                // --- FIN MODIFIÉ ---
+
+            } catch (error) {
+                // Erreur si le message reçu n'est PAS du JSON valide
+                console.error('Error processing WebSocket message (JSON malformé?):', error);
+                appendLog(`Erreur traitement WS (JSON invalide?): ${event.data}`, 'error');
             }
-            // Ignorer les messages keep-alive vides ou commentaires (commençant par ':')
-            else if (messageData && !messageData.startsWith(':')) {
-                // Traiter comme un message de log normal
-                addLogDirect(messageData);
-            }
-            // else { console.debug("SSE Keep-alive received"); } // Optionnel: log keep-alive
         };
-        // --- FIN MODIFICATION SSE ---
 
-        evtSource.onerror = function(err) {
-            console.error("Erreur EventSource:", err);
-            addLogDirect("!!! Erreur de connexion au flux de logs. Vérifiez que le backend est lancé. Reconnexion auto...");
-            // L'EventSource tente de se reconnecter automatiquement.
-            // Si la reconnexion échoue constamment, il faudra peut-être une logique plus avancée.
+        ws.onerror = (error) => {
+            // Cette erreur se produit souvent si le serveur backend n'est pas joignable
+            console.error('WebSocket error:', error);
+            appendLog('Erreur de connexion WebSocket. Le backend est-il démarré et accessible?', 'error');
+            statusValue.textContent = 'Erreur Connexion';
+            statusValue.className = 'status-error'; // Utiliser une classe d'erreur
+            stopBotBtn.disabled = true;
+            startBotBtn.disabled = false; // Permettre de réessayer de démarrer (ce qui refera un fetch)
+            ws = null; // Important de réinitialiser ws ici
+        };
+
+        ws.onclose = (event) => {
+            console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
+            // Ne pas afficher si la fermeture était propre (code 1000 ou 1001) et que ws est null (déjà géré)
+            if (ws && event.code !== 1000 && event.code !== 1001) {
+                 appendLog(`Connexion WebSocket fermée (Code: ${event.code}). Tentative de reconnexion possible.`, 'warn');
+            } else if (!ws) {
+                 appendLog(`Connexion WebSocket fermée.`, 'info');
+            }
+            statusValue.textContent = 'Déconnecté';
+            statusValue.className = 'status-stopped';
+            stopBotBtn.disabled = true;
+            startBotBtn.disabled = false;
+            ws = null; // Réinitialiser ws variable
+            // Optionnel: Tentative de reconnexion automatique après un délai
+            // setTimeout(connectWebSocket, 5000); // Attention aux boucles infinies si le serveur est down
         };
     }
-    // --- FIN SSE ---
 
-    // Ajoute un message brut à la zone de log
-    function addLogDirect(message) {
-        if (logOutput) {
-            // Ajouter une nouvelle ligne avant le message sauf si c'est le premier
-            if (logOutput.textContent !== 'Initialisation du frontend...') {
-                 logOutput.textContent += `\n${message}`;
-            } else {
-                 logOutput.textContent = message; // Remplacer le message initial
-            }
-            logOutput.scrollTop = logOutput.scrollHeight; // Auto-scroll vers le bas
+    // --- UI Update Functions ---
+
+    function updateUI(state) {
+        if (!state) {
+            console.warn("updateUI called with null or undefined state");
+            return;
+        }
+        // console.log("Updating UI with state:", state); // Debug
+
+        // Update Bot Status section
+        statusValue.textContent = state.status || 'Inconnu';
+        statusValue.className = state.status === 'RUNNING' ? 'status-running' : (state.status === 'STOPPED' ? 'status-stopped' : 'status-error');
+        strategyTypeValueSpan.textContent = state.config.STRATEGY_TYPE || 'N/A';
+        symbolValue.textContent = state.symbol || 'N/A';
+        timeframeValue.textContent = state.timeframe || 'N/A';
+        quoteAssetLabel.textContent = state.quote_asset || 'USDT';
+        baseAssetLabel.textContent = state.base_asset || 'N/A';
+        symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
+        balanceValue.textContent = formatNumber(state.available_balance, 2);
+        quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
+
+        // Update current price
+        // Utiliser state.current_price s'il est fourni directement par le backend, sinon fallback sur book ticker
+        if (state.current_price) {
+             priceValue.textContent = formatNumber(state.current_price);
+        } else if (state.latest_book_ticker && state.latest_book_ticker.b) {
+             priceValue.textContent = formatNumber(state.latest_book_ticker.b);
         } else {
-            console.warn("Élément logOutput non trouvé ! Message:", message);
+             priceValue.textContent = 'N/A';
+        }
+
+        // Update Position Status
+        if (state.in_position && state.entry_details) {
+            const entryPrice = formatNumber(state.entry_details.avg_price);
+            const entryQty = formatNumber(state.entry_details.quantity);
+            positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
+            positionValue.className = 'status-running';
+        } else {
+            positionValue.textContent = 'Aucune';
+            positionValue.className = '';
+        }
+
+        // Update Control Buttons state
+        startBotBtn.disabled = state.status === 'RUNNING';
+        stopBotBtn.disabled = state.status !== 'RUNNING';
+
+        // Update Parameter Inputs
+        if (state.config) {
+            strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
+            updateParameterVisibility(strategySelector.value);
+
+            // SWING Params
+            paramTimeframe.value = state.config.TIMEFRAME_STR || '1h';
+            paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? ''; // Utiliser ?? pour gérer null/undefined
+            paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
+            paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
+            paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
+            paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
+            paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
+            paramRisk.value = state.config.RISK_PER_TRADE ?? '';
+            paramCapitalAllocation.value = state.config.CAPITAL_ALLOCATION ?? '';
+            paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
+            paramUseEmaFilter.checked = state.config.USE_EMA_FILTER || false;
+            paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION || false;
+
+            // SCALPING Params
+            paramSl.value = state.config.STOP_LOSS_PERCENTAGE ?? '';
+            paramTp.value = state.config.TAKE_PROFIT_PERCENTAGE ?? '';
+            paramLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
+        } else {
+            console.warn("State received without config object. Cannot update parameters.");
         }
     }
 
-    // Ajoute un message formaté (avec timestamp) depuis le JS frontend
-    function addLogFromJS(message) {
-        const timestamp = new Date().toLocaleTimeString();
-        addLogDirect(`[${timestamp}] (FRONTEND) ${message}`);
-    }
+    function updateOrderHistory(history) {
+        if (!orderHistoryBody) return;
+        orderHistoryBody.innerHTML = ''; // Clear existing rows
 
-    // --- Fonctions pour l'historique des ordres ---
-    function fetchOrderHistory() {
-        addLogFromJS("Récupération de l'historique des ordres...");
-        fetch(`${API_BASE_URL}/order_history`)
-            .then(response => {
-                if (!response.ok) {
-                    // Essayer de lire le corps de la réponse pour une erreur plus détaillée
-                    return response.text().then(text => {
-                        throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
-                    });
-                }
-                return response.json();
-            })
-            .then(orders => {
-                addLogFromJS("Historique des ordres récupéré avec succès.");
-                updateOrderHistoryUI(orders);
-            })
-            .catch(error => {
-                console.error('Erreur de récupération de l\'historique des ordres:', error);
-                addLogFromJS(`Erreur historique ordres: ${error.message}`);
-                if (orderHistoryBody) {
-                     // Afficher l'erreur dans le tableau
-                     orderHistoryBody.innerHTML = `<tr><td colspan="10" style="color: red; text-align: center;">Erreur chargement historique: ${error.message}</td></tr>`;
-                }
-            });
-    }
-
-    // Met à jour l'UI de l'historique des ordres
-    function updateOrderHistoryUI(orders) {
-        if (!orderHistoryBody) {
-            console.error("Element 'order-history-body' not found.");
-            return;
-        }
-        orderHistoryBody.innerHTML = ''; // Vider le corps du tableau
-
-        if (!orders || orders.length === 0) {
-            // Si le placeholder existe, le réinsérer, sinon mettre un message par défaut
+        if (!history || history.length === 0) {
+            // Clone and append placeholder if it exists
             if (orderHistoryPlaceholder) {
-                 orderHistoryBody.appendChild(orderHistoryPlaceholder.cloneNode(true));
+                 const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true); // Use template content
+                 orderHistoryBody.appendChild(placeholderClone);
             } else {
-                 orderHistoryBody.innerHTML = '<tr><td colspan="10" style="text-align: center; font-style: italic; color: #888;">Aucun ordre dans l\'historique.</td></tr>';
+                 // Fallback if placeholder template is missing
+                 const row = orderHistoryBody.insertRow();
+                 const cell = row.insertCell();
+                 cell.colSpan = 10; // Adjust colspan based on actual columns
+                 cell.textContent = "Aucun ordre dans l'historique.";
+                 cell.style.textAlign = 'center';
             }
             return;
         }
 
-        // --- MODIFICATION ICI: Retrait de .slice().reverse() ---
-        // Le backend trie déjà les ordres du plus récent au plus ancien.
-        orders.forEach(order => {
-        // --- FIN MODIFICATION ---
+        // Sort history by timestamp descending (most recent first)
+        // Ensure timestamps are numbers for correct sorting
+        history.sort((a, b) => (parseInt(b.timestamp || 0)) - (parseInt(a.timestamp || 0)));
+
+        history.forEach(order => {
             const row = document.createElement('tr');
-            const timestamp = order.timestamp ? new Date(order.timestamp).toLocaleString() : 'N/A';
+            const performancePct = (order.performance_pct !== null && order.performance_pct !== undefined)
+                ? `${formatNumber(order.performance_pct * 100, 2)}%`
+                : 'N/A';
 
-            // Calcul et formatage du prix/valeur
-            let priceOrValue = 'N/A';
-            const executedQtyNum = parseFloat(order.executedQty);
-            const cummulativeQuoteQtyNum = parseFloat(order.cummulativeQuoteQty);
-            const priceNum = parseFloat(order.price); // Pour ordres LIMIT
-
-            if (!isNaN(cummulativeQuoteQtyNum) && !isNaN(executedQtyNum) && executedQtyNum > 0) {
-                // Calculer le prix moyen si quantité exécutée > 0
-                const avgPrice = cummulativeQuoteQtyNum / executedQtyNum;
-                // Afficher la valeur totale et le prix moyen entre parenthèses
-                priceOrValue = `${cummulativeQuoteQtyNum.toFixed(4)} (${avgPrice.toFixed(4)} avg)`;
-            } else if (!isNaN(priceNum) && priceNum > 0) {
-                // Si pas exécuté mais prix défini (ordre LIMIT), afficher le prix
-                priceOrValue = priceNum.toFixed(4);
-            } else if (order.type === 'MARKET') {
-                 priceOrValue = '(MARKET)'; // Indiquer ordre Market non (encore) rempli
+            // Calculate average price if price is zero or missing but quantities are present
+            let avgPrice = order.price;
+            if ((!avgPrice || parseFloat(avgPrice) === 0) && parseFloat(order.cummulativeQuoteQty) > 0 && parseFloat(order.executedQty) > 0) {
+                avgPrice = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
             }
 
-            // Formatage des quantités
-            const origQtyStr = order.origQty ? parseFloat(order.origQty).toFixed(6) : 'N/A';
-            const executedQtyStr = order.executedQty ? parseFloat(order.executedQty).toFixed(6) : 'N/A';
+            // Display average price for BUY/SELL, or total value if preferred for SELL
+            const priceOrValue = formatNumber(avgPrice, 8);
+            // const priceOrValue = order.side === 'BUY'
+            //     ? formatNumber(avgPrice, 8)
+            //     : formatNumber(order.cummulativeQuoteQty, 2); // Alternative: Show total value for sells
 
-            // Formatage de la performance
-            let performanceHtml = '<td>N/A</td>'; // Cellule par défaut
-            if (typeof order.performance_pct === 'number' && isFinite(order.performance_pct)) {
-                const perfValue = order.performance_pct;
-                const perfFormatted = perfValue.toFixed(2) + '%';
-                let perfClass = '';
-                if (perfValue > 0) {
-                    perfClass = 'performance-positive';
-                } else if (perfValue < 0) {
-                    perfClass = 'performance-negative';
-                }
-                // Créer la cellule avec la classe et le contenu
-                performanceHtml = `<td class="${perfClass}">${perfFormatted}</td>`;
-            }
-
-            // Ajouter une classe CSS basée sur le statut de l'ordre
-            row.className = `status-${(order.status || 'unknown').toLowerCase().replace(/ /g, '_')}`; // ex: status-partially_filled
-
-            // Construire le HTML de la ligne
             row.innerHTML = `
-                <td>${timestamp}</td>
+                <td>${formatTimestamp(order.timestamp)}</td>
                 <td>${order.symbol || 'N/A'}</td>
-                <td class="${order.side?.toLowerCase()}">${order.side || 'N/A'}</td>
+                <td class="${order.side === 'BUY' ? 'side-buy' : 'side-sell'}">${order.side || 'N/A'}</td>
                 <td>${order.type || 'N/A'}</td>
-                <td>${origQtyStr}</td>
-                <td>${executedQtyStr}</td>
+                <td>${formatNumber(order.origQty)}</td>
+                <td>${formatNumber(order.executedQty)}</td>
                 <td>${priceOrValue}</td>
                 <td>${order.status || 'N/A'}</td>
-                ${performanceHtml}
+                <td class="${(order.performance_pct || 0) >= 0 ? 'perf-positive' : 'perf-negative'}">${performancePct}</td>
                 <td>${order.orderId || 'N/A'}</td>
             `;
-            orderHistoryBody.appendChild(row); // Ajouter la ligne au tableau
-        });
-    }
-    // --- FIN HISTORIQUE ---
-
-    // --- Fonctions Statut et Paramètres (inchangées) ---
-    function fetchBotStatus() {
-        fetch(`${API_BASE_URL}/status`)
-        .then(response => {
-             if (!response.ok) {
-                 // Tenter de lire le message d'erreur du backend
-                 return response.text().then(text => { throw new Error(`HTTP ${response.status}: ${text || response.statusText}`); });
-             }
-             return response.json();
-         })
-        .then(data => {
-            updateStatusUI(data);
-        })
-        .catch(error => {
-            console.error('Erreur de récupération du statut:', error);
-            // Ne pas spammer les logs JS avec des erreurs de connexion répétées si le backend est down
-            // addLogFromJS(`Erreur connexion statut: ${error.message}`);
-            updateStatusUI({ status: 'Erreur Connexion' }); // Afficher l'erreur dans l'UI
+            orderHistoryBody.appendChild(row);
         });
     }
 
-    function fetchParameters() {
-        addLogFromJS("Chargement des paramètres initiaux...");
-        fetch(`${API_BASE_URL}/parameters`)
-            .then(response => {
-                if (!response.ok) { throw new Error(`HTTP ${response.status}: ${response.statusText}`); }
-                return response.json();
-            })
-            .then(data => {
-                console.log("Paramètres reçus:", data);
-                // Appliquer les paramètres aux champs input
-                for (const key in paramInputs) {
-                    if (data.hasOwnProperty(key) && paramInputs[key]) {
-                        const inputElement = paramInputs[key];
-                        const backendValue = data[key];
-                        try {
-                            if (inputElement.type === 'checkbox') {
-                                inputElement.checked = backendValue;
-                            } else if (inputElement.name === 'RISK_PER_TRADE' || inputElement.name === 'CAPITAL_ALLOCATION') {
-                                // Convertir les pourcentages (0.01 -> 1.0)
-                                inputElement.value = (backendValue * 100).toFixed(inputElement.name === 'RISK_PER_TRADE' ? 1 : 0);
-                            } else {
-                                inputElement.value = backendValue;
-                            }
-                        } catch (e) {
-                            console.error(`Erreur application paramètre ${key}:`, e);
-                        }
-                    } else if (paramInputs[key]) {
-                        console.warn(`Clé paramètre "${key}" non trouvée dans les données backend ou élément input manquant.`);
-                    }
-                }
-                addLogFromJS("Paramètres chargés.");
-                // Une fois les paramètres chargés, récupérer le statut initial
-                fetchBotStatus();
-            })
-            .catch(error => {
-                console.error('Erreur de récupération des paramètres:', error);
-                addLogFromJS(`Erreur chargement paramètres: ${error.message}`);
-                paramSaveStatus.textContent = "Erreur chargement paramètres initiaux."; paramSaveStatus.style.color = 'red';
-                // Désactiver les contrôles si les paramètres ne peuvent être chargés
-                startBtn.disabled = true;
-                stopBtn.disabled = true;
-            });
-    }
 
-    function updateStatusUI(data) {
-        const status = data.status || 'Inconnu';
-        statusValue.textContent = status;
-        symbolValue.textContent = data.symbol || 'N/A';
-        timeframeValue.textContent = data.timeframe || 'N/A';
+    // --- API Call Functions ---
 
-        // Mise à jour de la position
-        const isInPosition = data.in_position || false;
-        positionValue.textContent = isInPosition ? 'Oui' : 'Non';
-        positionValue.style.fontWeight = isInPosition ? 'bold' : 'normal';
-        positionValue.style.color = isInPosition ? 'blue' : 'inherit';
-        if (isInPosition && data.entry_details) {
-             const entryPrice = parseFloat(data.entry_details.avg_price).toFixed(4);
-             const entryQty = parseFloat(data.entry_details.quantity).toFixed(6);
-             positionValue.textContent += ` (Entrée: ${entryQty} @ ${entryPrice})`;
-        }
-
-        // Mise à jour des labels et valeurs des assets/balances
-        if (quoteAssetLabel) { quoteAssetLabel.textContent = data.quote_asset || 'USDT'; }
-        if (balanceValue) {
-            balanceValue.textContent = data.available_balance !== undefined && data.available_balance !== null
-                ? parseFloat(data.available_balance).toFixed(2) : 'N/A';
-        }
-        if (baseAssetLabel) { baseAssetLabel.textContent = data.base_asset || 'N/A'; }
-        if (quantityValue) {
-            quantityValue.textContent = data.symbol_quantity !== undefined && data.symbol_quantity !== null
-                ? parseFloat(data.symbol_quantity).toFixed(6) : 'N/A';
-        }
-        if (symbolPriceLabel) { symbolPriceLabel.textContent = data.symbol || 'N/A'; }
-        if (priceValue) {
-             priceValue.textContent = data.current_price !== undefined && data.current_price !== null
-                ? parseFloat(data.current_price).toFixed(4) : 'N/A';
-        }
-
-        // Mise à jour de l'état des boutons et couleur du statut
-        if (status === 'En cours') {
-            statusValue.style.color = 'green';
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-        } else if (status === 'Arrêté') {
-            statusValue.style.color = 'red';
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-        } else if (status === 'Erreur Connexion') {
-             statusValue.style.color = 'darkred';
-             startBtn.disabled = true; // Ne pas permettre de démarrer si erreur connexion
-             stopBtn.disabled = true;
-        } else { // Démarrage, Arrêt en cours, Erreur Init/Run etc.
-            statusValue.style.color = 'orange';
-            startBtn.disabled = true;
-            stopBtn.disabled = true;
-        }
-    }
-
-    // --- Gestion des Contrôles (Start/Stop) ---
-    startBtn.addEventListener('click', () => {
-        addLogFromJS("Tentative de démarrage du bot...");
-        startBtn.disabled = true;
-        stopBtn.disabled = true;
-        statusValue.textContent = 'Démarrage...'; statusValue.style.color = 'orange';
-
-        fetch(`${API_BASE_URL}/start`, { method: 'POST' })
-            .then(response => {
-                // Gérer les erreurs HTTP et les erreurs logiques du backend
-                return response.json().then(data => ({ ok: response.ok, status: response.status, data }));
-            })
-            .then(({ ok, status, data }) => {
-                const message = data.message || `Erreur inconnue (HTTP ${status})`;
-                if (ok && data.success) {
-                    addLogFromJS(message);
-                    // Rafraîchir immédiatement le statut et l'historique après l'ordre de démarrage
-                    fetchBotStatus();
-                    fetchOrderHistory();
-                } else {
-                    addLogFromJS(`Échec démarrage: ${message}`);
-                    console.warn("Échec démarrage (logique backend):", data);
-                    fetchBotStatus(); // Mettre à jour l'UI même en cas d'échec
-                }
-            })
-            .catch(error => {
-                console.error('Erreur communication démarrage:', error);
-                addLogFromJS(`Erreur communication démarrage: ${error.message}`);
-                fetchBotStatus(); // Mettre à jour l'UI pour refléter l'échec
-            });
-    });
-
-    stopBtn.addEventListener('click', () => {
-        addLogFromJS("Tentative d'arrêt du bot...");
-        startBtn.disabled = true;
-        stopBtn.disabled = true;
-        statusValue.textContent = 'Arrêt...'; statusValue.style.color = 'orange';
-
-        fetch(`${API_BASE_URL}/stop`, { method: 'POST' })
-             .then(response => {
-                return response.json().then(data => ({ ok: response.ok, status: response.status, data }));
-            })
-            .then(({ ok, status, data }) => {
-                 const message = data.message || `Erreur inconnue (HTTP ${status})`;
-                 if (ok && data.success) {
-                    addLogFromJS(message);
-                    fetchBotStatus(); // Rafraîchir le statut
-                } else {
-                    // Gérer le cas où le bot était déjà arrêté (pas une vraie erreur)
-                    if (message.includes("déjà arrêté")) {
-                         addLogFromJS("Le bot était déjà arrêté.");
-                    } else {
-                         addLogFromJS(`Échec arrêt: ${message}`);
-                         console.warn("Échec arrêt (logique backend):", data);
-                    }
-                    fetchBotStatus(); // Mettre à jour l'UI
-                }
-            })
-            .catch(error => {
-                console.error('Erreur communication arrêt:', error);
-                addLogFromJS(`Erreur communication arrêt: ${error.message}`);
-                fetchBotStatus(); // Mettre à jour l'UI
-            });
-    });
-
-    // --- Écouteur pour Sauvegarder les Paramètres ---
-    saveParamsBtn.addEventListener('click', () => {
-        addLogFromJS("Sauvegarde des paramètres...");
-        paramSaveStatus.textContent = "Sauvegarde en cours..."; paramSaveStatus.style.color = "orange";
-        saveParamsBtn.disabled = true;
-
-        const newParams = {};
-        let isValid = true;
-        // Récupérer et valider (basiquement) les valeurs des inputs
-        for (const key in paramInputs) {
-            if (paramInputs[key]) {
-                const inputElement = paramInputs[key];
-                const label = document.querySelector(`label[for='${inputElement.id}']`);
-                const paramName = label ? label.textContent.replace(':', '').trim() : key;
+    async function fetchBotState() {
+        appendLog("Récupération de l'état initial du bot...", "info");
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/status`);
+            if (!response.ok) {
+                // Try to get error message from backend response body
+                let errorMsg = `HTTP error! status: ${response.status}`;
                 try {
-                    if (inputElement.type === 'checkbox') {
-                        newParams[key] = inputElement.checked;
-                    } else if (inputElement.type === 'number') {
-                        const value = parseFloat(inputElement.value);
-                        if (isNaN(value) || !isFinite(value)) {
-                            throw new Error(`Valeur numérique invalide pour ${paramName}`);
-                        }
-                        // Vérifier min/max si définis sur l'input
-                        const min = parseFloat(inputElement.min);
-                        const max = parseFloat(inputElement.max);
-                        if (!isNaN(min) && value < min) throw new Error(`${paramName} doit être >= ${min}`);
-                        if (!isNaN(max) && value > max) throw new Error(`${paramName} doit être <= ${max}`);
-
-                        // Convertir les pourcentages pour le backend
-                        if (inputElement.name === 'RISK_PER_TRADE' || inputElement.name === 'CAPITAL_ALLOCATION') {
-                            newParams[key] = value / 100.0;
-                        } else {
-                            newParams[key] = value; // Assumer entier pour les autres
-                        }
-                    } else if (inputElement.tagName === 'SELECT') {
-                        newParams[key] = inputElement.value;
-                    } else { // type text, etc. (non utilisé ici mais pour l'exhaustivité)
-                        newParams[key] = inputElement.value;
-                    }
-                } catch (e) {
-                     addLogFromJS(`Erreur validation: ${e.message}`);
-                     isValid = false;
-                     paramSaveStatus.textContent = `Erreur: ${e.message}`; paramSaveStatus.style.color = "red";
-                     break; // Arrêter à la première erreur
-                }
+                    const errorResult = await response.json();
+                    errorMsg = errorResult.error || errorMsg;
+                } catch (e) { /* Ignore if response is not JSON */ }
+                throw new Error(errorMsg);
             }
+            const state = await response.json();
+            updateUI(state);
+            updateOrderHistory(state.order_history);
+            appendLog("État initial et historique récupérés.", "info");
+        } catch (error) {
+            console.error('Error fetching bot state:', error);
+            appendLog(`Erreur récupération état initial: ${error.message}`, 'error');
+            statusValue.textContent = 'Erreur';
+            statusValue.className = 'status-error';
         }
+    }
 
-        if (!isValid) {
-            saveParamsBtn.disabled = false;
-            setTimeout(() => { paramSaveStatus.textContent = ""; }, 7000);
-            return; // Ne pas envoyer si invalide
-        }
-
-        console.log("Envoi des paramètres:", newParams);
-        // Envoyer les paramètres au backend
-        fetch(`${API_BASE_URL}/parameters`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newParams),
-        })
-        .then(response => response.json().then(data => ({ ok: response.ok, status: response.status, data })))
-        .then(({ ok, status, data }) => {
-            const message = data.message || `Erreur inconnue (HTTP ${status})`;
-            if (ok && data.success) {
-                paramSaveStatus.textContent = "Paramètres sauvegardés !"; paramSaveStatus.style.color = "green";
-                if (message.includes("redémarrage")) {
-                    paramSaveStatus.textContent += " (Redémarrage conseillé)";
-                    paramSaveStatus.style.color = "darkorange"; // Couleur différente pour l'avertissement
-                }
-                addLogFromJS("Paramètres sauvegardés avec succès.");
-                // Recharger le statut pour refléter le nouveau timeframe potentiellement
-                fetchBotStatus();
-            } else {
-                const errorMsg = data.message || `Erreur serveur ${status}`;
-                console.error("Erreur sauvegarde paramètres (serveur):", data);
-                paramSaveStatus.textContent = `Erreur: ${errorMsg}`; paramSaveStatus.style.color = "red";
-                addLogFromJS(`Erreur sauvegarde paramètres: ${errorMsg}`);
+    async function startBot() {
+        appendLog("Envoi de la commande Démarrer...", "info");
+        try {
+            // Disable button immediately to prevent double clicks
+            startBotBtn.disabled = true;
+            const response = await fetch(`${API_BASE_URL}/api/start`, { method: 'POST' });
+            const result = await response.json(); // Always try to parse JSON
+            if (!response.ok) {
+                throw new Error(result.error || `Erreur serveur: ${response.status}`);
             }
-        })
-        .catch(error => {
-            console.error('Erreur communication sauvegarde paramètres:', error);
-            addLogFromJS(`Erreur communication sauvegarde: ${error.message}`);
-            paramSaveStatus.textContent = "Erreur communication serveur."; paramSaveStatus.style.color = "red";
-        })
-        .finally(() => {
-            saveParamsBtn.disabled = false;
-            // Effacer le message de statut après quelques secondes
-            setTimeout(() => { paramSaveStatus.textContent = ""; }, 7000);
-        });
+            appendLog(result.message || 'Commande Démarrer envoyée avec succès.', 'info');
+            // UI state (like button disabling) will be updated via WebSocket 'status_update'
+        } catch (error) {
+            console.error('Error starting bot:', error);
+            appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
+            // Re-enable button if start failed
+            startBotBtn.disabled = false;
+        }
+    }
+
+    async function stopBot() {
+        appendLog("Envoi de la commande Arrêter...", "info");
+        try {
+            // Disable button immediately
+            stopBotBtn.disabled = true;
+            const response = await fetch(`${API_BASE_URL}/api/stop`, { method: 'POST' });
+            const result = await response.json(); // Always try to parse JSON
+            if (!response.ok) {
+                throw new Error(result.error || `Erreur serveur: ${response.status}`);
+            }
+            appendLog(result.message || 'Commande Arrêter envoyée avec succès.', 'info');
+            // UI state will be updated via WebSocket 'status_update'
+        } catch (error) {
+            console.error('Error stopping bot:', error);
+            appendLog(`Erreur à l'arrêt du bot: ${error.message}`, 'error');
+            // Re-enable button if stop failed (though state might be inconsistent)
+             stopBotBtn.disabled = false; // Or rely on WebSocket update
+        }
+    }
+
+    async function saveParameters() {
+        paramSaveStatus.textContent = 'Sauvegarde en cours...';
+        paramSaveStatus.className = 'status-saving';
+        saveParamsBtn.disabled = true; // Disable button during save
+
+        const paramsToSend = {
+            STRATEGY_TYPE: strategySelector.value,
+            // SWING Params
+            TIMEFRAME_STR: paramTimeframe.value,
+            EMA_SHORT_PERIOD: parseInt(paramEmaShort.value) || null,
+            EMA_LONG_PERIOD: parseInt(paramEmaLong.value) || null,
+            EMA_FILTER_PERIOD: parseInt(paramEmaFilter.value) || null,
+            RSI_PERIOD: parseInt(paramRsiPeriod.value) || null,
+            RSI_OVERBOUGHT: parseInt(paramRsiOb.value) || null,
+            RSI_OVERSOLD: parseInt(paramRsiOs.value) || null,
+            RISK_PER_TRADE: parseFloat(paramRisk.value) || null,
+            CAPITAL_ALLOCATION: parseFloat(paramCapitalAllocation.value) || null,
+            VOLUME_AVG_PERIOD: parseInt(paramVolumeAvg.value) || null,
+            USE_EMA_FILTER: paramUseEmaFilter.checked,
+            USE_VOLUME_CONFIRMATION: paramUseVolume.checked,
+            // SCALPING Params
+            STOP_LOSS_PERCENTAGE: parseFloat(paramSl.value) || null,
+            TAKE_PROFIT_PERCENTAGE: parseFloat(paramTp.value) || null,
+            SCALPING_LIMIT_ORDER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
+            // --- AJOUT: Envoyer aussi les autres paramètres scalping si définis dans l'UI ---
+            // SCALPING_ORDER_TYPE: document.getElementById('param-scalping-order-type').value, // Exemple si vous ajoutez ces champs
+            // SCALPING_LIMIT_TIF: document.getElementById('param-scalping-tif').value,
+            // SCALPING_DEPTH_LEVELS: parseInt(document.getElementById('param-scalping-depth-levels').value) || null,
+            // SCALPING_DEPTH_SPEED: document.getElementById('param-scalping-depth-speed').value,
+            // SCALPING_SPREAD_THRESHOLD: parseFloat(document.getElementById('param-scalping-spread').value) || null,
+            // SCALPING_IMBALANCE_THRESHOLD: parseFloat(document.getElementById('param-scalping-imbalance').value) || null,
+            // SCALPING_MIN_TRADE_VOLUME: parseFloat(document.getElementById('param-scalping-min-volume').value) || null,
+            // --- FIN AJOUT ---DER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
+        };
+
+        // Clean object: remove keys with null or empty string values if backend prefers that
+        // Object.keys(paramsToSend).forEach(key => {
+        //     if (paramsToSend[key] === null || paramsToSend[key] === '') {
+        //         delete paramsToSend[key];
+        //     }
+        // });
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/parameters`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(paramsToSend),
+            });
+            const result = await response.json(); // Always try to parse JSON
+
+            if (!response.ok) {
+                throw new Error(result.error || `Erreur serveur: ${response.status}`);
+            }
+            paramSaveStatus.textContent = result.message || 'Paramètres sauvegardés avec succès!';
+            paramSaveStatus.className = 'status-success';
+            // Re-fetch state to confirm update in UI inputs immediately
+            fetchBotState();
+        } catch (error) {
+            console.error('Error saving parameters:', error);
+            paramSaveStatus.textContent = `Erreur de sauvegarde: ${error.message}`;
+            paramSaveStatus.className = 'status-error';
+        } finally {
+            // Clear status message after a delay
+            setTimeout(() => {
+                paramSaveStatus.textContent = '';
+                paramSaveStatus.className = '';
+            }, 5000);
+            saveParamsBtn.disabled = false; // Re-enable button
+        }
+    }
+
+    // --- Event Listeners ---
+    startBotBtn.addEventListener('click', startBot);
+    stopBotBtn.addEventListener('click', stopBot);
+    saveParamsBtn.addEventListener('click', saveParameters);
+
+    strategySelector.addEventListener('change', (event) => {
+        updateParameterVisibility(event.target.value);
     });
 
-    // --- Initialisation au chargement de la page ---
-    addLogFromJS("Initialisation de l'interface...");
-    fetchParameters(); // Charger les paramètres en premier (déclenche fetchBotStatus ensuite)
-    connectLogStream(); // Démarrer la connexion SSE pour les logs
-    fetchOrderHistory(); // Charger l'historique initial une fois
 
-    // Intervalle pour rafraîchir PÉRIODIQUEMENT le statut (pas l'historique)
-    const statusInterval = setInterval(() => {
-        fetchBotStatus();
-    }, 5000); // Toutes les 5 secondes
+    // --- Initial Setup ---
+    // Set initial visibility based on the default selected strategy in HTML
+    updateParameterVisibility(strategySelector.value);
+    // Connect WebSocket (this will also trigger fetchBotState on successful connection)
+    connectWebSocket();
 
-     // Gérer la fermeture de la page/onglet
-     window.addEventListener('beforeunload', () => {
-        if (evtSource && evtSource.readyState !== EventSource.CLOSED) {
-            evtSource.close();
-            console.log("Flux de logs SSE fermé.");
-        }
-        clearInterval(statusInterval); // Arrêter le rafraîchissement du statut
-        console.log("Intervalle de statut arrêté.");
-    });
-
-    addLogFromJS("Interface initialisée. En attente de connexion backend...");
-});
+}); // End DOMContentLoaded

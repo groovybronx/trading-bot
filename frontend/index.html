@@ -15,8 +15,10 @@
         <section id="bot-status">
             <h2>Statut du Bot</h2>
             <p>État : <span id="status-value">Inconnu</span></p>
+            <!-- AJOUT: Affichage de la stratégie active -->
+            <p>Stratégie : <span id="strategy-type-value">N/A</span></p>
             <p>Symbole : <span id="symbol-value">N/A</span></p>
-            <p>Timeframe : <span id="timeframe-value">N/A</span></p>
+            <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour SWING)</small></p>
             <p>Balance (<span id="quote-asset-label">USDT</span>) : <span id="balance-value">N/A</span></p>
             <p>Quantité (<span id="base-asset-label">N/A</span>) : <span id="quantity-value">N/A</span></p>
             <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="price-value">N/A</span></p>
@@ -42,8 +44,9 @@
                         </tr>
                     </thead>
                     <tbody id="order-history-body">
-                        <!-- Les lignes seront ajoutées par JS -->
-                        <tr><td colspan="10" id="order-history-placeholder">Aucun ordre dans l'historique de cette session.</td></tr>
+                        <template id="order-history-placeholder">
+                        <tr><td colspan="10">Aucun ordre dans l'historique de cette session.</td></tr>
+                        </template>
                     </tbody>
                 </table>
             </div>
@@ -62,74 +65,111 @@
 
         <section id="parameters">
              <h2>Paramètres de Stratégie</h2>
-             <div class="param-grid">
-                 <div>
-                    <label for="param-timeframe">Timeframe :</label>
-                    <select id="param-timeframe" name="TIMEFRAME_STR">
-                        <!-- AJOUTÉ L'OPTION 1s -->
-                        <option value="1s">1s</option>
-                        <option value="1m">1m</option>
-                        <option value="3m">3m</option>
-                        <option value="5m">5m</option>
-                        <option value="15m">15m</option>
-                        <option value="30m">30m</option>
-                        <option value="1h">1h</option>
-                        <option value="2h">2h</option>
-                        <option value="4h">4h</option>
-                        <option value="6h">6h</option>
-                        <option value="8h">8h</option>
-                        <option value="12h">12h</option>
-                        <option value="1d">1d</option>
-                        <option value="3d">3d</option>
-                        <option value="1w">1w</option>
-                        <option value="1M">1M</option>
-                    </select>
-                </div>
-                <div>
-                    <label for="param-ema-short">EMA Courte :</label>
-                    <input type="number" id="param-ema-short" name="EMA_SHORT_PERIOD" min="1" step="1">
-                </div>
-                <div>
-                    <label for="param-ema-long">EMA Longue :</label>
-                    <input type="number" id="param-ema-long" name="EMA_LONG_PERIOD" min="2" step="1">
-                </div>
-                 <div>
-                    <label for="param-ema-filter">EMA Filtre :</label>
-                    <input type="number" id="param-ema-filter" name="EMA_FILTER_PERIOD" min="1" step="1">
-                </div>
-                 <div>
-                    <label for="param-rsi-period">Période RSI :</label>
-                    <input type="number" id="param-rsi-period" name="RSI_PERIOD" min="2" step="1">
-                </div>
-                 <div>
-                    <label for="param-rsi-ob">RSI Surachat :</label>
-                    <input type="number" id="param-rsi-ob" name="RSI_OVERBOUGHT" min="51" max="100" step="1">
-                </div>
-                 <div>
-                    <label for="param-rsi-os">RSI Survente :</label>
-                    <input type="number" id="param-rsi-os" name="RSI_OVERSOLD" min="0" max="49" step="1">
-                </div>
-                 <div>
-                    <label for="param-risk">Risque / Trade (%) :</label>
-                    <input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="10" step="0.1">
-                </div>
-                <div>
-                    <label for="param-capital-allocation">Allocation Capital (%) :</label>
-                    <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100" step="1">
-                 </div>
-                 <div>
-                    <label for="param-volume-avg">Moy. Vol. Période :</label>
-                    <input type="number" id="param-volume-avg" name="VOLUME_AVG_PERIOD" min="1" step="1">
-                </div>
-                 <div class="checkbox-group">
-                    <input type="checkbox" id="param-use-ema-filter" name="USE_EMA_FILTER">
-                    <label for="param-use-ema-filter">Utiliser Filtre EMA</label>
-                </div>
-                 <div class="checkbox-group">
-                    <input type="checkbox" id="param-use-volume" name="USE_VOLUME_CONFIRMATION">
-                    <label for="param-use-volume">Utiliser Confirmation Volume</label>
-                </div>
+
+             <!-- AJOUT: Sélecteur de Stratégie -->
+             <div>
+                 <label for="param-strategy-type">Type de Stratégie :</label>
+                 <select id="param-strategy-type" name="STRATEGY_TYPE">
+                     <option value="SWING">SWING (EMA/RSI - Kline)</option>
+                     <option value="SCALPING">SCALPING (Book Ticker)</option>
+                 </select>
              </div>
+             <hr>
+
+             <!-- AJOUT: Conteneur pour les paramètres SWING -->
+             <div id="swing-params">
+                 <h3>Paramètres SWING</h3>
+                 <div class="param-grid">
+                     <div>
+                        <label for="param-timeframe">Timeframe :</label>
+                        <select id="param-timeframe" name="TIMEFRAME_STR">
+                            <!-- Option 1s enlevée car moins pertinente pour Swing, mais peut rester si besoin -->
+                            <!-- <option value="1s">1s</option> -->
+                            <option value="1m">1m</option>
+                            <option value="3m">3m</option>
+                            <option value="5m">5m</option>
+                            <option value="15m">15m</option>
+                            <option value="30m">30m</option>
+                            <option value="1h">1h</option>
+                            <option value="2h">2h</option>
+                            <option value="4h">4h</option>
+                            <option value="6h">6h</option>
+                            <option value="8h">8h</option>
+                            <option value="12h">12h</option>
+                            <option value="1d">1d</option>
+                            <option value="3d">3d</option>
+                            <option value="1w">1w</option>
+                            <option value="1M">1M</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="param-ema-short">EMA Courte :</label>
+                        <input type="number" id="param-ema-short" name="EMA_SHORT_PERIOD" min="1" step="1">
+                    </div>
+                    <div>
+                        <label for="param-ema-long">EMA Longue :</label>
+                        <input type="number" id="param-ema-long" name="EMA_LONG_PERIOD" min="2" step="1">
+                    </div>
+                     <div>
+                        <label for="param-ema-filter">EMA Filtre :</label>
+                        <input type="number" id="param-ema-filter" name="EMA_FILTER_PERIOD" min="1" step="1">
+                    </div>
+                     <div>
+                        <label for="param-rsi-period">Période RSI :</label>
+                        <input type="number" id="param-rsi-period" name="RSI_PERIOD" min="2" step="1">
+                    </div>
+                     <div>
+                        <label for="param-rsi-ob">RSI Surachat :</label>
+                        <input type="number" id="param-rsi-ob" name="RSI_OVERBOUGHT" min="51" max="100" step="1">
+                    </div>
+                     <div>
+                        <label for="param-rsi-os">RSI Survente :</label>
+                        <input type="number" id="param-rsi-os" name="RSI_OVERSOLD" min="0" max="49" step="1">
+                    </div>
+                     <div>
+                        <label for="param-risk">Risque / Trade (%) :</label>
+                        <input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="10" step="0.1">
+                    </div>
+                    <div>
+                        <label for="param-capital-allocation">Allocation Capital (%) :</label>
+                        <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100" step="1">
+                     </div>
+                     <div>
+                        <label for="param-volume-avg">Moy. Vol. Période :</label>
+                        <input type="number" id="param-volume-avg" name="VOLUME_AVG_PERIOD" min="1" step="1">
+                    </div>
+                     <div class="checkbox-group">
+                        <input type="checkbox" id="param-use-ema-filter" name="USE_EMA_FILTER">
+                        <label for="param-use-ema-filter">Utiliser Filtre EMA</label>
+                    </div>
+                     <div class="checkbox-group">
+                        <input type="checkbox" id="param-use-volume" name="USE_VOLUME_CONFIRMATION">
+                        <label for="param-use-volume">Utiliser Confirmation Volume</label>
+                    </div>
+                 </div>
+             </div> <!-- Fin swing-params -->
+
+             <!-- AJOUT: Conteneur pour les paramètres SCALPING (caché par défaut) -->
+             <div id="scalping-params" style="display: none;">
+                 <h3>Paramètres SCALPING</h3>
+                 <div class="param-grid">
+                     <div>
+                         <label for="param-sl">Stop Loss (%) :</label>
+                         <input type="number" id="param-sl" name="STOP_LOSS_PERCENTAGE" min="0.01" max="20" step="0.01">
+                     </div>
+                     <div>
+                         <label for="param-tp">Take Profit (%) :</label>
+                         <input type="number" id="param-tp" name="TAKE_PROFIT_PERCENTAGE" min="0.01" max="20" step="0.01">
+                     </div>
+                     <div>
+                         <label for="param-limit-timeout">Timeout Ordre Limit (ms) :</label>
+                         <input type="number" id="param-limit-timeout" name="SCALPING_LIMIT_ORDER_TIMEOUT_MS" min="500" max="60000" step="100">
+                     </div>
+                     <!-- Note: Pour scalping, le risque/allocation est souvent implicite (tout le capital dispo ou fixe) -->
+                     <!-- On pourrait ajouter des paramètres spécifiques si la stratégie backend les utilise -->
+                 </div>
+             </div> <!-- Fin scalping-params -->
+
              <button id="save-params-btn">Sauvegarder les Paramètres</button>
              <p id="param-save-status"></p>
         </section>

@@ -3,413 +3,484 @@
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any
+import os
+import dotenv
+from typing import Optional, List, Dict,Union, Any
 
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceRequestException
+from binance.spot import Spot as SpotClient
+from binance.error import ClientError, ServerError
 
-# Importer la configuration pour les clés API et le mode testnet
-try:
-    import config
-    API_KEY = config.BINANCE_API_KEY
-    API_SECRET = config.BINANCE_API_SECRET
-    USE_TESTNET = getattr(config, 'USE_TESTNET', False)
-except ImportError:
-    logging.error("Fichier config.py non trouvé ou clés API non définies dans binance_client_wrapper.")
-    API_KEY = "YOUR_API_KEY_PLACEHOLDER"
-    API_SECRET = "YOUR_SECRET_KEY_PLACEHOLDER"
-    USE_TESTNET = False
+# Import config manager to get settings like USE_TESTNET
+from config_manager import config_manager
 
-# Variable globale pour le client et lock pour la gestion thread-safe
-_client: Optional[Client] = None
-_client_lock = threading.Lock()
+dotenv.load_dotenv()
+logger = logging.getLogger(__name__)
 
-# Configuration du logging (partagé avec bot.py)
-logger = logging.getLogger()
+# --- Module Globals ---
+_client: Optional[SpotClient] = None
+_client_lock = threading.Lock() # Lock for thread-safe client initialization
 
-# (get_client, get_klines, get_account_balance, get_symbol_info, get_symbol_ticker, place_order functions remain unchanged)
-def get_client() -> Optional[Client]:
+# --- Client Initialization ---
+
+def get_client() -> Optional[SpotClient]:
     """
-    Initialise et retourne le client Binance (API réelle ou testnet) de manière thread-safe.
-    Retourne None si l'initialisation échoue.
+    Initializes and returns the Binance Spot client (singleton pattern).
+    Uses configuration from ConfigManager (API keys from .env, testnet from config).
+    Returns None if initialization fails.
     """
     global _client
+    # Fast check without lock
+    if _client is not None:
+        return _client
+
+    # Acquire lock only if client is not initialized
     with _client_lock:
+        # Double check inside lock
         if _client is None:
             try:
-                # Vérification plus robuste des clés placeholders
-                if not API_KEY or not API_SECRET or API_KEY == "YOUR_API_KEY_PLACEHOLDER" or API_SECRET == "YOUR_SECRET_KEY_PLACEHOLDER":
-                    logger.error("Clés API Binance non configurées ou invalides dans config.py ou .env.")
-                    return None
+                # Read keys directly from environment variables
+                api_key = os.getenv('ENV_API_KEY')
+                api_secret = os.getenv('ENV_API_SECRET')
+                # Read testnet setting from config manager
+                use_testnet = config_manager.get_value("USE_TESTNET", True) # Default to True if not set
 
-                if USE_TESTNET:
-                    _client = Client(API_KEY, API_SECRET, testnet=True)
-                    logger.info("Client Binance initialisé en mode TESTNET.")
-                else:
-                    _client = Client(API_KEY, API_SECRET)
-                    logger.info("Client Binance initialisé en mode API réelle.")
+                # Validate API keys
+                if not api_key or not api_secret or api_key == "YOUR_API_KEY_PLACEHOLDER" or api_secret == "YOUR_SECRET_KEY_PLACEHOLDER":
+                    logger.critical("Binance API keys not configured or are placeholders in .env file.")
+                    return None # Cannot proceed without valid keys
 
-                _client.ping()
-                logger.info("Connexion à l'API Binance réussie (ping OK).")
+                # Determine base URL
+                base_url = "https://testnet.binance.vision" if use_testnet else "https://api.binance.com"
+                logger.info(f"Initializing Binance Spot client (Base URL: {base_url})...")
 
-            except (BinanceAPIException, BinanceRequestException) as e:
-                logger.error(f"Erreur API Binance lors de l'initialisation : {e}")
-                _client = None
+                # Create client instance
+                client_instance = SpotClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+
+                # Test connection
+                client_instance.ping()
+                logger.info("Connection to Binance Spot API successful (ping OK).")
+                _client = client_instance # Assign to global variable
+
+            except ClientError as e:
+                logger.critical(f"Binance Client Error during initialization: Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}", exc_info=False)
+                _client = None # Ensure client remains None on error
+            except ServerError as e:
+                 logger.critical(f"Binance Server Error during initialization: Status={e.status_code}, Msg={str(e)}", exc_info=False)
+                 _client = None
             except Exception as e:
-                logger.exception(f"Erreur inattendue lors de l'initialisation du client Binance : {e}")
+                # Catch any other unexpected exceptions
+                logger.critical(f"Unexpected error during Binance Spot client initialization: {e}", exc_info=True)
                 _client = None
+        # Return the initialized client (or None if failed)
         return _client
+
+# --- API Call Wrappers ---
 
 def get_klines(
     symbol: str,
-    interval: str,
+    interval: str, # Expects '1m', '1h', etc.
     limit: int = 100,
     retries: int = 3,
-    delay: int = 5
+    delay: int = 5 # Seconds between retries
 ) -> Optional[List[List[Any]]]:
     """
-    Récupère les données klines pour un symbole et un intervalle donnés.
-    Gère les erreurs API et les tentatives multiples.
-    (Correction Pylance appliquée)
+    Retrieves kline/candlestick data for a symbol and interval.
+    Handles API errors and retries.
     """
     client = get_client()
-    if not client:
-        logger.error("Client Binance non initialisé pour get_klines.")
-        return None
+    if not client: return None
 
+    logger.debug(f"Attempting to retrieve {limit} klines for {symbol} ({interval})...")
     for attempt in range(retries):
         try:
-            klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-            logger.debug(f"Klines récupérées pour {symbol} ({interval}), limit={limit}.")
+            # Make the API call
+            klines = client.klines(symbol=symbol.upper(), interval=interval, limit=limit)
 
-            # --- FIX: Add explicit type check before returning ---
-            if isinstance(klines, list) and all(isinstance(item, list) for item in klines):
-                return klines # Succès - Confirmed it's a list of lists
-            elif not klines and isinstance(klines, list): # Handle empty list case
-                 logger.warning(f"Aucune kline retournée (liste vide) pour {symbol} ({interval}). Tentative {attempt + 1}/{retries}")
-                 if attempt < retries - 1: time.sleep(delay); continue
-                 else: logger.error(f"Échec récupération klines pour {symbol} après {retries} tentatives (données vides)."); return None
+            # Validate response structure
+            if isinstance(klines, list):
+                if not klines: # Empty list received
+                     logger.warning(f"get_klines({symbol}, {interval}): Received empty list (Attempt {attempt + 1}/{retries}).")
+                     if attempt < retries - 1: time.sleep(delay); continue
+                     else: logger.error(f"get_klines({symbol}, {interval}): Failed after {retries} attempts (empty data)."); return None
+                # Check if all items in the list are also lists (expected kline format)
+                if all(isinstance(item, list) for item in klines):
+                    logger.info(f"get_klines({symbol}, {interval}): Successfully retrieved {len(klines)} klines.")
+                    return klines
+                else:
+                    logger.error(f"get_klines({symbol}, {interval}): Unexpected format in response list items."); return None
             else:
-                # This case *shouldn't* happen based on API behavior, but handles Pylance's concern
-                logger.error(f"Type inattendu reçu de client.get_klines pour {symbol}: {type(klines)}. Attendu: List[List[Any]]")
-                return None # Return None as per the function's type hint on failure/unexpected type
-            # --- END FIX ---
+                # Response was not a list
+                logger.error(f"get_klines({symbol}, {interval}): Unexpected response type: {type(klines)}."); return None
 
-        except (BinanceAPIException, BinanceRequestException) as e:
-            logger.error(f"Erreur API Binance lors récupération klines {symbol} ({interval}). Tentative {attempt + 1}/{retries}. Erreur : {e}")
+        except ClientError as e:
+            logger.error(f"get_klines({symbol}, {interval}): Client Error (Attempt {attempt + 1}/{retries}). Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
             if attempt < retries - 1: time.sleep(delay)
-            else: logger.error(f"Échec final récupération klines {symbol} après {retries} tentatives."); return None
+            else: logger.error(f"get_klines({symbol}, {interval}): Final attempt failed."); return None
+        except ServerError as e:
+             logger.error(f"get_klines({symbol}, {interval}): Server Error (Attempt {attempt + 1}/{retries}). Status={e.status_code}, Msg={str(e)}")
+             if attempt < retries - 1: time.sleep(delay)
+             else: logger.error(f"get_klines({symbol}, {interval}): Final attempt failed."); return None
         except Exception as e:
-            logger.exception(f"Erreur inattendue lors récupération klines {symbol} ({interval}). Tentative {attempt + 1}/{retries}.")
+            logger.exception(f"get_klines({symbol}, {interval}): Unexpected error (Attempt {attempt + 1}/{retries}).")
             if attempt < retries - 1: time.sleep(delay)
-            else: logger.error(f"Échec final récupération klines {symbol} après {retries} tentatives (erreur inattendue)."); return None
-    return None
+            else: logger.error(f"get_klines({symbol}, {interval}): Final attempt failed."); return None
+    return None # Should not be reached if retries > 0, but acts as fallback
 
-def get_account_balance(asset: str = 'USDT') -> Optional[float]:
+
+def get_account_balance(asset: str) -> Optional[float]:
     """
-    Récupère le solde disponible ('free') pour un actif spécifique.
-    (Code inchangé par rapport à la version précédente)
+    Retrieves the available ('free') balance for a specific asset.
+    Returns None on API error, 0.0 if asset not found in balances.
     """
     client = get_client()
-    if not client: logger.error("Client Binance non initialisé pour get_account_balance."); return None
+    if not client: return None
+
     try:
-        account_info = client.get_account()
+        logger.debug(f"Retrieving balance for {asset}...")
+        # Increase recvWindow if needed, default might be too short sometimes
+        account_info = client.account(recvWindow=10000)
         balances = account_info.get('balances', [])
-        balance_info = next((item for item in balances if item.get("asset") == asset), None)
+
+        # Find the specific asset in the balances list
+        balance_info = next((item for item in balances if item.get("asset") == asset.upper()), None)
+
         if balance_info and 'free' in balance_info:
             try:
+                # Convert the 'free' balance string to float
                 available_balance = float(balance_info['free'])
-                logger.info(f"Solde {asset} disponible récupéré : {available_balance}")
+                logger.info(f"Available {asset} balance: {available_balance}")
                 return available_balance
             except (ValueError, TypeError):
-                 logger.error(f"Impossible de convertir le solde 'free' ({balance_info['free']}) en float pour {asset}.")
-                 return None
+                 logger.error(f"get_account_balance({asset}): Could not convert balance '{balance_info['free']}' to float.")
+                 return None # Indicate conversion error
         else:
-            logger.warning(f"Aucune information de solde trouvée pour l'asset {asset} dans le compte.")
+            # Asset not found in the account balances
+            logger.warning(f"get_account_balance({asset}): Asset not found in account balances. Returning 0.0")
             return 0.0
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API Binance lors de la récupération du solde {asset} : {e}")
+    except ClientError as e:
+        logger.error(f"get_account_balance({asset}): Client Error. Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
         return None
+    except ServerError as e:
+         logger.error(f"get_account_balance({asset}): Server Error. Status={e.status_code}, Msg={str(e)}")
+         return None
     except Exception as e:
-        logger.exception(f"Erreur inattendue lors de la récupération du solde {asset}.")
+        logger.exception(f"get_account_balance({asset}): Unexpected error.")
         return None
+
 
 def get_symbol_info(symbol: str) -> Optional[Dict[str, Any]]:
     """
-    Récupère les informations et règles de trading pour un symbole.
-    (Code inchangé par rapport à la version précédente)
+    Retrieves exchange information (filters, precision) for a specific symbol.
+    Returns None if error or symbol not found.
     """
     client = get_client()
-    if not client: logger.error("Client Binance non initialisé pour get_symbol_info."); return None
+    if not client: return None
+
     try:
-        info = client.get_symbol_info(symbol)
-        if info: logger.debug(f"Informations récupérées pour le symbole {symbol}."); return info
-        else: logger.warning(f"Aucune information trouvée pour le symbole {symbol} (symbole inexistant?)."); return None
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API Binance lors de la récupération des infos pour {symbol} : {e}")
+        logger.debug(f"Retrieving exchange info for {symbol}...")
+        # Request info only for the specific symbol
+        all_info = client.exchange_info(symbol=symbol.upper())
+
+        # Validate response structure
+        if all_info and 'symbols' in all_info and len(all_info['symbols']) == 1:
+            info = all_info['symbols'][0]
+            logger.debug(f"Exchange info for {symbol} retrieved successfully.")
+            return info
+        else:
+            logger.error(f"get_symbol_info({symbol}): Symbol info not found or invalid format in response: {all_info}")
+            return None
+    except ClientError as e:
+        logger.error(f"get_symbol_info({symbol}): Client Error. Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
         return None
+    except ServerError as e:
+         logger.error(f"get_symbol_info({symbol}): Server Error. Status={e.status_code}, Msg={str(e)}")
+         return None
     except Exception as e:
-        logger.exception(f"Erreur inattendue lors de la récupération des infos pour {symbol}.")
+        logger.exception(f"get_symbol_info({symbol}): Unexpected error.")
         return None
+
 
 def get_symbol_ticker(symbol: str) -> Optional[Dict[str, str]]:
     """
-    Récupère les informations du ticker (prix actuel) pour un symbole spécifique.
-    (Code inchangé par rapport à la version précédente)
+    Retrieves the latest price ticker for a specific symbol.
+    Returns None on error.
     """
     client = get_client()
-    if not client: logger.error("Client Binance non initialisé pour get_symbol_ticker."); return None
+    if not client: return None
+
     try:
-        logger.debug(f"Récupération du ticker pour {symbol}...")
-        ticker = client.get_symbol_ticker(symbol=symbol)
-        logger.debug(f"Ticker pour {symbol} reçu: {ticker}")
-        return ticker
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API/Request Binance lors de la récupération du ticker pour {symbol}: {e}")
+        logger.debug(f"Retrieving ticker for {symbol}...")
+        ticker = client.ticker_price(symbol=symbol.upper())
+
+        # Validate response
+        if ticker and 'price' in ticker:
+            logger.debug(f"Ticker for {symbol}: Price={ticker['price']}")
+            return ticker
+        else:
+            logger.error(f"get_symbol_ticker({symbol}): Invalid response format: {ticker}")
+            return None
+    except ClientError as e:
+        logger.error(f"get_symbol_ticker({symbol}): Client Error. Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
         return None
+    except ServerError as e:
+         logger.error(f"get_symbol_ticker({symbol}): Server Error. Status={e.status_code}, Msg={str(e)}")
+         return None
     except Exception as e:
-        logger.exception(f"Erreur inattendue lors de la récupération du ticker pour {symbol}")
+        logger.exception(f"get_symbol_ticker({symbol}): Unexpected error.")
         return None
+
 
 def place_order(
-    symbol: str,
-    side: str,
-    quantity: float,
-    order_type: str = 'MARKET',
-    price: Optional[str] = None,
-    time_in_force: str = 'GTC'
+    symbol: str, side: str, quantity: Union[float, str], order_type: str = 'MARKET',
+    price: Optional[Union[float, str]] = None, time_in_force: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Place un ordre sur Binance avec gestion d'erreur.
-    (Code inchangé par rapport à la version précédente)
+    Places an order on Binance. Handles MARKET vs LIMIT logic for quantity/price.
+    Returns the order details dict from Binance API, or None on failure.
     """
     client = get_client()
-    if not client: logger.error("Client Binance non initialisé pour place_order."); return None
+    if not client: return None
+
     try:
-        params = {'symbol': symbol, 'side': side, 'type': order_type, 'quantity': quantity}
-        if order_type == 'LIMIT':
-            if price is None: logger.error("Le prix est requis pour un ordre LIMIT."); return None
-            params['price'] = price; params['timeInForce'] = time_in_force
-        elif order_type != 'MARKET':
-            logger.error(f"Type d'ordre '{order_type}' non supporté."); return None
-        log_price_info = f"au prix {price}" if order_type == 'LIMIT' else "au marché"
-        logger.info(f"Tentative de placement d'un ordre {order_type} {side} de {quantity} {symbol} {log_price_info}...")
-        order = client.create_order(**params)
-        order_id = order.get('orderId', 'N/A'); status = order.get('status', 'N/A')
-        logger.info(f"Ordre {order_type} {side} placé avec succès pour {quantity} {symbol}. OrderId: {order_id}, Statut: {status}")
-        return order
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API Binance lors placement ordre {order_type} {side} {symbol}: Code={getattr(e, 'code', 'N/A')}, Message={e}")
-        return None
-    except Exception as e:
-        logger.exception(f"Erreur inattendue lors placement ordre {order_type} {side} {symbol}.")
-        return None
+        # Prepare base parameters
+        params = {'symbol': symbol.upper(), 'side': side.upper(), 'type': order_type.upper()}
+        log_price_info = ""
+        # Get asset names for logging clarity (assuming they are set in state_manager/config)
+        # base_asset = state_manager.get_state('base_asset') or 'BASE' # Fallback names
+        # quote_asset = state_manager.get_state('quote_asset') or 'QUOTE'
 
-# --- Fonctions pour User Data Stream ---
-
-def start_user_data_stream() -> Optional[str]:
-    """
-    Démarre un User Data Stream et retourne le listenKey.
-    Retourne None en cas d'échec.
-    """
-    client = get_client()
-    if not client:
-        logger.error("Client Binance non initialisé pour start_user_data_stream.")
-        return None
-    try:
-        # --- FIX: Assume the method now returns the key string directly ---
-        listen_key = client.stream_get_listen_key()
-
-        # Check if we received a non-empty string
-        if isinstance(listen_key, str) and listen_key:
-            logger.info(f"ListenKey User Data Stream obtenu: {listen_key[:5]}...")
-            return listen_key
+        # Handle quantity parameter based on order type/side
+        if params['type'] == 'MARKET' and params['side'] == 'BUY':
+            # For MARKET BUY, quantity is the amount of QUOTE asset to spend
+            params['quoteOrderQty'] = str(quantity)
+            # log_qty_info = f"{quantity} {quote_asset}" # Use actual quote asset name if available
+            log_qty_info = f"{quantity} QUOTE" # Simplified log
         else:
-            # Log the unexpected response if it wasn't a valid string
-            logger.error(f"Échec obtention ListenKey User Data Stream. Réponse inattendue: {listen_key}")
+            # For LIMIT orders (BUY/SELL) and MARKET SELL, quantity is the amount of BASE asset
+            params['quantity'] = str(quantity)
+            # log_qty_info = f"{quantity} {base_asset}" # Use actual base asset name if available
+            log_qty_info = f"{quantity} BASE" # Simplified log
+
+
+        # Handle price and timeInForce for LIMIT orders
+        if params['type'] == 'LIMIT':
+            if price is None or float(price) <= 0:
+                raise ValueError(f"Invalid or missing price for LIMIT order: {price}")
+            params['price'] = str(price)
+            params['timeInForce'] = (time_in_force or 'GTC').upper() # Default to GTC if not provided
+            log_price_info = f" @ {params['price']} ({params['timeInForce']})"
+        elif params['type'] == 'MARKET':
+             log_price_info = " @ market"
+        # Add other order types (STOP_LOSS_LIMIT etc.) here if needed
+        else:
+            # Raise error for unsupported types passed to this function
+            raise ValueError(f"Unsupported order_type for place_order: {order_type}")
+
+        # Log the attempt
+        logger.info(f"Placing Order: {params['side']} {params['type']} {log_qty_info} {symbol}{log_price_info}...")
+
+        # Make the API call
+        order_response = client.new_order(**params)
+
+        # Log the result
+        order_id = order_response.get('orderId', 'N/A')
+        status = order_response.get('status', 'N/A')
+        log_level = logging.INFO # Default log level for success/pending
+        if status in ['REJECTED', 'EXPIRED']:
+            log_level = logging.WARNING
+        elif status not in ['NEW', 'FILLED', 'PARTIALLY_FILLED']:
+             log_level = logging.ERROR # Unexpected status
+
+        logger.log(log_level, f"Order Placement Result {order_id}: Status={status}, Type={order_response.get('type')}, Side={order_response.get('side')}, Qty={order_response.get('origQty')}, ExecQty={order_response.get('executedQty', 'N/A')}")
+
+        return order_response # Return the full response dictionary
+
+    except (ClientError, ValueError) as e:
+        # Handle API client errors and validation errors (like invalid price)
+        error_code = getattr(e, 'error_code', None) if isinstance(e, ClientError) else None
+        error_msg = e.error_message if isinstance(e, ClientError) else str(e)
+        logger.error(f"place_order({symbol}, {side}, {order_type}): Client/Validation Error. Status={getattr(e, 'status_code', 'N/A')}, Code={error_code}, Msg={error_msg}")
+        # Provide hints for common errors
+        if error_code == -1013: logger.error(" -> Hint: Check order filters (minNotional, lotSize, priceFilter) or quantity/price precision.")
+        if error_code == -2010: logger.error(" -> Hint: Insufficient balance.")
+        return None # Indicate failure
+    except ServerError as e:
+         logger.error(f"place_order({symbol}, {side}, {order_type}): Server Error. Status={e.status_code}, Msg={str(e)}")
+         return None
+    except Exception as e:
+        # Catch any other unexpected errors
+        logger.exception(f"place_order({symbol}, {side}, {order_type}): Unexpected error.")
+        return None
+
+
+def cancel_order(symbol: str, orderId: int) -> Optional[Dict[str, Any]]:
+    """
+    Cancels an open order.
+    Returns order details on success, special status if already done/unknown, None on API error.
+    """
+    client = get_client()
+    if not client: return None
+
+    try:
+        logger.info(f"Attempting to cancel order {orderId} for {symbol}...")
+        result = client.cancel_order(symbol=symbol.upper(), orderId=orderId)
+        status = result.get('status')
+        logger.info(f"Cancel Order Result {orderId}: Status={status}")
+        return result
+    except ClientError as e:
+        # Handle specific error code for "Unknown order sent."
+        if e.error_code == -2011:
+            logger.warning(f"cancel_order({symbol}, {orderId}): Failed (Code: {e.error_code}). Order unknown or already filled/cancelled.")
+            # Return a synthetic response indicating the order is no longer open
+            return {"symbol": symbol, "orderId": orderId, "status": "UNKNOWN_OR_ALREADY_COMPLETED"}
+        else:
+            # Log other client errors
+            logger.error(f"cancel_order({symbol}, {orderId}): Client Error. Status={e.status_code}, Code={e.error_code}, Msg={e.error_message}")
             return None
-        # --- END FIX ---
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API Binance lors de l'obtention du ListenKey: {e}")
+    except ServerError as e:
+         logger.error(f"cancel_order({symbol}, {orderId}): Server Error. Status={e.status_code}, Msg={str(e)}")
+         return None
+    except Exception as e:
+        logger.exception(f"cancel_order({symbol}, {orderId}): Unexpected error.")
+        return None
+
+
+# --- User Data Stream Listen Key Management ---
+
+def create_listen_key() -> Optional[str]:
+    """Creates a new listenKey for the User Data Stream via REST API."""
+    client = get_client()
+    if not client: return None
+
+    try:
+        logger.info("Creating new ListenKey via REST API...")
+        response = client.new_listen_key() # Use the correct method from binance-connector
+        key = response.get('listenKey')
+        if key:
+            logger.info(f"New ListenKey created successfully: {key[:5]}...")
+            return key
+        else:
+            logger.error(f"Failed to create ListenKey, invalid API response: {response}")
+            return None
+    except (ClientError, ServerError) as e:
+        logger.error(f"API error creating ListenKey: {e}", exc_info=True)
         return None
     except Exception as e:
-        logger.exception("Erreur inattendue lors de l'obtention du ListenKey.")
+        logger.exception("Unexpected error creating ListenKey.")
         return None
 
-# (keepalive_user_data_stream and close_user_data_stream functions remain unchanged)
-def keepalive_user_data_stream(listen_key: str) -> bool:
-    """
-    Envoie une requête keepalive pour un listenKey donné.
-    Retourne True si succès, False sinon.
-    """
+
+def renew_listen_key(listen_key: str) -> bool:
+    """Renews (keepalive) an existing ListenKey via REST API."""
     client = get_client()
-    if not client:
-        logger.error("Client Binance non initialisé pour keepalive_user_data_stream.")
+    if not client or not listen_key:
+        logger.error("Cannot renew listen key: client not available or key missing.")
         return False
-    if not listen_key:
-        logger.error("Tentative de keepalive avec un listenKey vide.")
-        return False
+
     try:
-        client.stream_keepalive(listenKey=listen_key)
-        logger.info(f"Keepalive envoyé pour ListenKey: {listen_key[:5]}...")
+        logger.debug(f"Renewing ListenKey {listen_key[:5]}... via REST API...")
+        client.renew_listen_key(listenKey=listen_key) # Use the correct method
+        logger.info(f"ListenKey {listen_key[:5]}... renewed successfully.")
         return True
-    except (BinanceAPIException, BinanceRequestException) as e:
-        # Une erreur ici peut signifier que la clé a expiré
-        logger.error(f"Erreur API Binance lors du keepalive pour ListenKey {listen_key[:5]}...: {e}")
+    except ClientError as e:
+        # Handle invalid/expired key error specifically
+        if e.error_code == -1125:
+             logger.warning(f"Failed to renew ListenKey {listen_key[:5]} (Code {e.error_code}): Key likely expired or invalid.")
+             return False # Indicate failure so caller can handle (e.g., get new key)
+        else:
+             logger.error(f"API Client Error renewing ListenKey {listen_key[:5]}: {e}")
+             return False
+    except ServerError as e:
+        logger.error(f"API Server Error renewing ListenKey {listen_key[:5]}: {str(e)}")
         return False
     except Exception as e:
-        logger.exception(f"Erreur inattendue lors du keepalive pour ListenKey {listen_key[:5]}...")
+        logger.exception(f"Unexpected error renewing ListenKey {listen_key[:5]}.")
         return False
 
-def close_user_data_stream(listen_key: str) -> bool:
-    """
-    Ferme un User Data Stream associé à un listenKey.
-    Retourne True si succès, False sinon.
-    """
+
+def close_listen_key(listen_key: str) -> bool:
+    """Closes an existing ListenKey via REST API."""
     client = get_client()
-    if not client:
-        logger.error("Client Binance non initialisé pour close_user_data_stream.")
-        return False
-    if not listen_key:
-        logger.warning("Tentative de fermeture avec un listenKey vide.")
-        return True # Considérer comme succès si pas de clé à fermer
-    try:
-        client.stream_close(listenKey=listen_key)
-        logger.info(f"Requête de fermeture envoyée pour ListenKey: {listen_key[:5]}...")
+    # Don't fail if client/key missing, just log and return True (nothing to close)
+    if not client or not listen_key:
+        logger.debug("No client or listen key provided for closing.")
         return True
-    except (BinanceAPIException, BinanceRequestException) as e:
-        logger.error(f"Erreur API Binance lors de la fermeture du ListenKey {listen_key[:5]}...: {e}")
+
+    try:
+        logger.info(f"Closing ListenKey {listen_key[:5]}... via REST API...")
+        client.close_listen_key(listenKey=listen_key) # Use the correct method
+        logger.info(f"ListenKey {listen_key[:5]}... closed successfully.")
+        return True
+    except ClientError as e:
+         # If key is already invalid/expired, consider it successfully closed
+        if e.error_code == -1125:
+             logger.warning(f"Attempted to close ListenKey {listen_key[:5]} but it was already invalid/expired (Code {e.error_code}).")
+             return True # Effectively closed
+        else:
+             logger.error(f"API Client Error closing ListenKey {listen_key[:5]}: {e}")
+             return False # Indicate potential issue
+    except ServerError as e:
+        logger.error(f"API Server Error closing ListenKey {listen_key[:5]}: {str(e)}")
         return False
     except Exception as e:
-        logger.exception(f"Erreur inattendue lors de la fermeture du ListenKey {listen_key[:5]}...")
+        logger.exception(f"Unexpected error closing ListenKey {listen_key[:5]}.")
         return False
 
 
-# --- Bloc d'Exemple/Test (inchangé) ---
+# --- Example Usage / Test Block ---
 if __name__ == '__main__':
-    # Initialisation du logging pour les tests
-    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(log_formatter)
-    logger.addHandler(stream_handler)
-    logger.setLevel(logging.DEBUG)
+    # Setup basic logging for the test
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s')
+    logger.info("--- Testing Binance Client Wrapper ---")
 
-    logger.info("--- Test du Binance Client Wrapper ---")
-
-    # Test 1: Initialisation du client
     test_client = get_client()
     if test_client:
-        logger.info("Test 1: Initialisation client OK")
+        logger.info("Test 1: Client Initialization -> OK")
 
-        # Test 2: Récupération Klines
-        logger.info("Test 2: Récupération Klines (BTCUSDT, 1m, limit=5)...")
-        klines = get_klines(symbol='BTCUSDT', interval='1m', limit=5)
-        if klines and len(klines) == 5:
-            logger.info(f"Test 2: Klines récupérées OK (première bougie: {klines[0]})")
+        # Test getting symbol info
+        symbol = config_manager.get_value("SYMBOL", "BTCUSDT")
+        logger.info(f"\nTest 2: Get Symbol Info ({symbol})")
+        info = get_symbol_info(symbol)
+        if info:
+            logger.info(f"-> OK: Base={info.get('baseAsset')}, Quote={info.get('quoteAsset')}")
         else:
-            logger.error(f"Test 2: Échec récupération klines ou nombre incorrect (reçu: {len(klines) if klines else 'None'}).")
+            logger.error("-> FAILED")
 
-        # Test 3: Récupération Solde USDT
-        logger.info("Test 3: Récupération Solde USDT...")
-        balance = get_account_balance(asset='USDT')
+        # Test getting balance
+        quote_asset = info.get('quoteAsset', 'USDT') if info else 'USDT'
+        logger.info(f"\nTest 3: Get Account Balance ({quote_asset})")
+        balance = get_account_balance(quote_asset)
         if balance is not None:
-            logger.info(f"Test 3: Solde USDT récupéré OK: {balance}")
+            logger.info(f"-> OK: Balance = {balance}")
         else:
-            logger.error("Test 3: Échec récupération solde USDT.")
+            logger.error("-> FAILED")
 
-        # Test 4: Récupération Infos Symbole
-        logger.info("Test 4: Récupération Infos Symbole (BTCUSDT)...")
-        symbol_info = get_symbol_info(symbol='BTCUSDT')
-        if symbol_info and symbol_info.get('symbol') == 'BTCUSDT':
-            logger.info("Test 4: Infos Symbole récupérées OK.")
-            # Afficher les filtres pour info
-            filters = symbol_info.get('filters', [])
-            logger.debug(f"Filtres pour BTCUSDT: {filters}")
-            lot_size = next((f for f in filters if f.get('filterType') == 'LOT_SIZE'), None)
-            min_notional = next((f for f in filters if f.get('filterType') == 'MIN_NOTIONAL'), None)
-            logger.debug(f"  LOT_SIZE: {lot_size}")
-            logger.debug(f"  MIN_NOTIONAL: {min_notional}")
+        # Test getting klines
+        tf = config_manager.get_value("TIMEFRAME_STR", "1m")
+        logger.info(f"\nTest 4: Get Klines ({symbol}, {tf}, limit=5)")
+        klines = get_klines(symbol, tf, limit=5)
+        if klines:
+            logger.info(f"-> OK: Retrieved {len(klines)} klines.")
         else:
-            logger.error("Test 4: Échec récupération infos symbole.")
+            logger.error("-> FAILED")
 
-        # Test 5: Récupération Ticker
-        logger.info("Test 5: Récupération Ticker (BTCUSDT)...")
-        ticker = get_symbol_ticker(symbol='BTCUSDT')
-        if ticker and 'price' in ticker:
-             logger.info(f"Test 5: Ticker récupéré OK: Prix={ticker['price']}")
+        # Test Listen Key cycle
+        logger.info("\nTest 5: Listen Key Cycle (Create, Renew, Close)")
+        lk = create_listen_key()
+        if lk:
+            logger.info(f"-> Create OK: {lk[:5]}...")
+            logger.info("   Waiting 5s...")
+            time.sleep(5)
+            logger.info("   Testing Renew...")
+            renew_ok = renew_listen_key(lk)
+            logger.info(f"-> Renew {'OK' if renew_ok else 'FAILED'}")
+            logger.info("   Testing Close...")
+            close_ok = close_listen_key(lk)
+            logger.info(f"-> Close {'OK' if close_ok else 'FAILED'}")
         else:
-             logger.error("Test 5: Échec récupération ticker.")
-
-        # Test 6 & 7: User Data Stream (si testnet ou si vous êtes sûr)
-        if USE_TESTNET:
-            logger.info("Test 6: Démarrage User Data Stream...")
-            test_listen_key = start_user_data_stream()
-            if test_listen_key:
-                logger.info(f"Test 6: ListenKey obtenu OK: {test_listen_key}")
-
-                logger.info("Test 7: Keepalive User Data Stream...")
-                time.sleep(2) # Attendre un peu
-                keepalive_ok = keepalive_user_data_stream(test_listen_key)
-                if keepalive_ok: logger.info("Test 7: Keepalive OK.")
-                else: logger.error("Test 7: Échec Keepalive.")
-
-                logger.info("Test 8: Fermeture User Data Stream...")
-                time.sleep(2)
-                close_ok = close_user_data_stream(test_listen_key)
-                if close_ok: logger.info("Test 8: Fermeture OK.")
-                else: logger.error("Test 8: Échec Fermeture.")
-
-            else:
-                logger.error("Test 6: Échec obtention ListenKey.")
-        else:
-            logger.warning("Tests 6, 7, 8 (User Data Stream) sautés car USE_TESTNET=False.")
-
-        # ATTENTION: Le test de placement d'ordre n'est pas exécuté par défaut
-        # Décommentez et adaptez prudemment si nécessaire, SURTOUT EN TESTNET
-        # logger.info("Test 9: Placement d'un ordre MARKET BUY (TESTNET UNIQUEMENT)...")
-        # if USE_TESTNET and symbol_info:
-        #     # Calculer une petite quantité juste au-dessus du minNotional pour le test
-        #     min_notional_filter = next((f for f in symbol_info.get('filters', []) if f.get('filterType') == 'MIN_NOTIONAL'), None)
-        #     current_price = float(ticker.get('price', '0')) if ticker else 0
-        #     test_qty = 0.0
-        #     if min_notional_filter and current_price > 0:
-        #         min_notional_val = float(min_notional_filter.get('minNotional', '10'))
-        #         # Viser un notionnel légèrement supérieur au minimum
-        #         target_notional = min_notional_val * 1.1
-        #         raw_qty = target_notional / current_price
-        #         # Importer strategy pour formater
-        #         try:
-        #             from strategy import format_quantity
-        #             test_qty = format_quantity(raw_qty, symbol_info)
-        #             # Double vérification si la quantité formatée est toujours suffisante
-        #             if test_qty * current_price < min_notional_val:
-        #                  logger.warning("Quantité formatée insuffisante pour MIN_NOTIONAL, tentative d'augmentation.")
-        #                  # Essayer d'ajouter un step_size
-        #                  lot_size_filter = next((f for f in symbol_info.get('filters', []) if f.get('filterType') == 'LOT_SIZE'), None)
-        #                  if lot_size_filter:
-        #                      step_size = float(lot_size_filter.get('stepSize', '0'))
-        #                      if step_size > 0: test_qty += step_size
-        #                      test_qty = format_quantity(test_qty, symbol_info) # Re-formater
-
-        #         except ImportError:
-        #             logger.error("Impossible d'importer strategy.format_quantity pour le test d'ordre.")
-        #         except Exception as fmt_e:
-        #              logger.error(f"Erreur formatage quantité test: {fmt_e}")
-
-        #     if test_qty > 0:
-        #         logger.info(f"Tentative de placer un ordre MARKET BUY de {test_qty} BTCUSDT...")
-        #         order = place_order(symbol='BTCUSDT', side='BUY', quantity=test_qty, order_type='MARKET')
-        #         if order:
-        #             logger.info(f"Test 9: Ordre placé OK: {order}")
-        #         else:
-        #             logger.error("Test 9: Échec placement ordre.")
-        #     else:
-        #          logger.error("Test 9: Impossible de calculer une quantité de test valide pour l'ordre.")
-
-        # else:
-        #     logger.warning("Test 9 (Ordre) sauté (pas en Testnet ou infos symbole manquantes).")
+            logger.error("-> Create FAILED.")
 
     else:
-        logger.error("Test 1: Échec initialisation client. Tests suivants annulés.")
+        logger.error("Test 1: Client Initialization -> FAILED")
 
-    logger.info("--- Fin des tests du Binance Client Wrapper ---")
+    logger.info("\n--- Wrapper Tests Finished ---")
