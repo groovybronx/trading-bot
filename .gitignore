@@ -12,3 +12,5 @@ __pycache__/
 .vscode/
 
 /backend/config.py
+
+bot_data.json
