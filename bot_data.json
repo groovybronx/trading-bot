@@ -2,10 +2,10 @@
     "state": {
         "in_position": true,
         "entry_details": {
-            "order_id": 5826054,
-            "avg_price": 86857.79,
+            "order_id": 5843630,
+            "avg_price": 87276.35999999999,
             "quantity": 0.00011,
-            "timestamp": 1745259861811
+            "timestamp": 1745264115372
         }
     },
     "history": []

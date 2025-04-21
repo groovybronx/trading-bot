@@ -124,9 +124,15 @@ class StateManager:
         order_id_str = str(order_details.get('orderId') or order_details.get('i', 'N/A'))
         order_side = order_details.get('side') or order_details.get('S')
         order_status = order_details.get('status') or order_details.get('X')
+        history_before_update = [] # For logging comparison
 
         with self._config_state_lock:
             try:
+                # --- ADDED LOGGING ---
+                # Log history *before* potential modification for debugging
+                history_before_update = list(self._bot_state.get('order_history', []))
+                # --- END ADDED LOGGING ---
+
                 entry_details = self._bot_state.get("entry_details")
                 performance_pct = None
 
@@ -187,8 +193,14 @@ class StateManager:
 
         # Broadcast outside the lock to avoid holding it during network I/O
         if should_broadcast:
-            # Log an event marker for easier parsing/filtering if needed
             logger.info(f"EVENT:ORDER_HISTORY_UPDATED:{order_id_str}:{order_status}")
+            # --- ADDED LOGGING ---
+            # Log the history *just before* broadcasting it
+            current_history = self.get_order_history() # Get the updated history
+            logger.debug(f"Broadcasting order history update. History contains {len(current_history)} orders. First few: {current_history[:3]}")
+            # Optional: Log history before update for comparison
+            # logger.debug(f"History before update had {len(history_before_update)} orders.")
+            # --- END ADDED LOGGING ---
             broadcast_order_history_update() # Call the imported function
 
     def get_order_history(self) -> List[Dict[str, Any]]:

@@ -7,55 +7,68 @@ import time
 from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, List, Optional
 
-# --- MODIFIÉ: Importer depuis websocket_utils ---
+# --- ADDED: Import broadcast_state_update ---
 from websocket_utils import broadcast_state_update
-# --- FIN MODIFIÉ ---
+# --- END ADDED ---
 
-# MODIFIÉ: Importer les instances des managers au lieu des variables globales
+# Import the instances of managers
 from state_manager import state_manager
 from config_manager import config_manager
 
-# Importer la logique de stratégie et le wrapper client
+# Import strategy logic and client wrapper
 import strategy
 import binance_client_wrapper
-# Importer bot_core pour execute_exit et gestion ordres
+# Import bot_core for execute_exit and order management
 import bot_core
 
 logger = logging.getLogger(__name__)
 
-# --- Gestionnaire Book Ticker ---
+# --- Book Ticker Handler ---
 def process_book_ticker_message(msg: Dict[str, Any]):
     """
-    Callback pour @bookTicker. Met à jour l'état et déclenche la logique scalping & SL/TP.
+    Callback for @bookTicker. Updates state and triggers scalping logic & SL/TP.
     """
     try:
-        if isinstance(msg, dict) and 'e' in msg and msg['e'] == 'bookTicker' and 's' in msg and 'b' in msg and 'a' in msg:
+        # Validate message structure
+        if isinstance(msg, dict) and msg.get('e') == 'bookTicker' and 's' in msg and 'b' in msg and 'a' in msg:
             symbol = msg['s']
+            # Update the latest ticker in the state manager
             state_manager.update_book_ticker(msg)
 
-            # --- MODIFIÉ: Appel direct de la fonction importée ---
+            # --- Broadcast state update after ticker update ---
             broadcast_state_update()
-            # --- FIN MODIFIÉ ---
+            # --- End Broadcast ---
 
-            current_book_ticker = state_manager.get_book_ticker()
+            # Get current data for logic checks
+            current_book_ticker = state_manager.get_book_ticker() # Get the data just updated
             current_state = state_manager.get_state()
             current_config = config_manager.get_config()
+            configured_symbol = current_state.get("symbol")
 
-            # --- 1. Vérification SL/TP (Prioritaire) ---
+            # Ignore messages for symbols other than the configured one
+            if configured_symbol and symbol != configured_symbol:
+                # logger.debug(f"process_book_ticker: Message for {symbol} ignored (bot configured for {configured_symbol}).")
+                return
+            elif not configured_symbol:
+                logger.warning("process_book_ticker: Symbol not configured in state, logic skipped.")
+                return
+
+            # --- 1. Check SL/TP (Priority) ---
             check_sl_tp(current_book_ticker, current_state, current_config)
 
-            # --- 2. Déclencher la logique de décision Scalping ---
+            # --- 2. Trigger Scalping Logic (if applicable) ---
             strategy_type = current_config.get("STRATEGY_TYPE")
-            open_order_id = current_state.get("open_order_id")
-            is_in_position = current_state.get("in_position")
-            configured_symbol = current_state.get("symbol")
-            entry_details = current_state.get("entry_details")
-            open_order_timestamp = current_state.get("open_order_timestamp")
+            if strategy_type == 'SCALPING':
+                open_order_id = current_state.get("open_order_id")
+                is_in_position = current_state.get("in_position")
+                entry_details = current_state.get("entry_details")
+                open_order_timestamp = current_state.get("open_order_timestamp")
 
-            if strategy_type == 'SCALPING' and configured_symbol and symbol == configured_symbol:
                 if open_order_id:
+                    # Check if an open LIMIT order should be cancelled due to timeout
                     check_limit_order_timeout(configured_symbol, open_order_id, open_order_timestamp, current_config)
                 elif not is_in_position:
+                    # Check for entry conditions if not in position and no open order
                     depth_snapshot = state_manager.get_depth_snapshot()
                     available_balance = current_state.get("available_balance", 0.0)
                     symbol_info = binance_client_wrapper.get_symbol_info(configured_symbol)
@@ -66,160 +79,190 @@ def process_book_ticker_message(msg: Dict[str, Any]):
                             current_config, available_balance, symbol_info
                         )
                         if entry_order_params:
-                            logger.info("Scalping Entry Signal détecté. Lancement place_scalping_order...")
+                            logger.info("Scalping Entry Signal detected. Launching place_scalping_order...")
+                            # Place order in a separate thread to avoid blocking the WS handler
                             threading.Thread(target=bot_core.place_scalping_order, args=(entry_order_params,), daemon=True).start()
                     else:
-                         logger.error(f"process_book_ticker: Impossible de récupérer symbol_info pour {configured_symbol}, vérification entrée scalping ignorée.")
+                         logger.error(f"process_book_ticker: Cannot retrieve symbol_info for {configured_symbol}, skipping scalping entry check.")
 
-                else: # En position
+                else: # In position
+                    # Check for exit conditions if in position
                     if entry_details:
                         depth_snapshot = state_manager.get_depth_snapshot()
                         if strategy.check_scalping_exit(
                             configured_symbol, entry_details, current_book_ticker,
                             depth_snapshot, current_config
                         ):
-                             logger.info("Scalping Exit Signal (Stratégie) détecté. Lancement execute_exit...")
+                             logger.info("Scalping Exit Signal (Strategy) detected. Launching execute_exit...")
+                             # Execute exit in a separate thread
                              threading.Thread(target=bot_core.execute_exit, args=("Signal Scalping Strategy",), daemon=True).start()
 
-            elif strategy_type == 'SCALPING' and configured_symbol and symbol != configured_symbol:
-                 logger.debug(f"process_book_ticker: Message pour {symbol} ignoré (bot configuré pour {configured_symbol}).")
-            elif strategy_type == 'SCALPING' and not configured_symbol:
-                 logger.warning("process_book_ticker: Symbole non configuré dans l'état, logique scalping ignorée.")
-
         elif isinstance(msg, dict) and msg.get('e') == 'error':
+            # Handle specific WebSocket errors if needed
             logger.error(f"Received WebSocket BookTicker error message: {msg}")
 
     except Exception as e:
+        # Catch-all for unexpected errors in this handler
         logger.critical(f"!!! CRITICAL Exception in process_book_ticker_message: {e} !!!", exc_info=True)
 
-# --- Vérification SL/TP ---
+# --- SL/TP Check ---
 def check_sl_tp(
     book_ticker_data: Dict[str, Any],
     current_state: Dict[str, Any],
     current_config: Dict[str, Any]
 ):
-    """Vérifie Stop-Loss et Take-Profit en utilisant les données du book ticker."""
+    """Checks Stop-Loss and Take-Profit using book ticker data."""
+    # Only check if in position and entry details are available
     if not current_state.get("in_position") or not current_state.get("entry_details"):
         return
 
     entry_details = current_state["entry_details"]
     symbol = current_state.get("symbol")
+    # Get SL/TP percentages from config
     sl_percent_config = current_config.get("STOP_LOSS_PERCENTAGE")
     tp_percent_config = current_config.get("TAKE_PROFIT_PERCENTAGE")
 
-    if sl_percent_config is None and tp_percent_config is None: return
+    # Skip if neither SL nor TP is configured
+    if sl_percent_config is None and tp_percent_config is None:
+        return
 
     try:
-        current_price_str = book_ticker_data.get('b') # Best Bid Price pour vendre
-        if not current_price_str: return
+        # Use best bid price for checking sell conditions (SL/TP)
+        current_price_str = book_ticker_data.get('b')
+        if not current_price_str:
+            logger.warning("check_sl_tp: Missing 'b' (best bid) in book ticker data.")
+            return
         current_price_decimal = Decimal(current_price_str)
-        if current_price_decimal <= 0: return
+        if current_price_decimal <= 0:
+            logger.warning(f"check_sl_tp: Invalid current price {current_price_decimal}.")
+            return
 
+        # Get entry price from state
         entry_price_str = entry_details.get("avg_price")
-        if entry_price_str is None: return
-        entry_price_decimal = Decimal(str(entry_price_str))
-        if entry_price_decimal <= 0: return
+        if entry_price_str is None:
+            logger.error("check_sl_tp: Missing 'avg_price' in entry_details.")
+            return
+        entry_price_decimal = Decimal(str(entry_price_str)) # Ensure it's Decimal
+        if entry_price_decimal <= 0:
+            logger.error(f"check_sl_tp: Invalid entry price {entry_price_decimal}.")
+            return
 
-        # Stop Loss
+        # --- Stop Loss Check ---
         if sl_percent_config is not None:
             try:
-                sl_percent = Decimal(str(sl_percent_config))
+                sl_percent = Decimal(str(sl_percent_config)) # Ensure Decimal
                 if sl_percent > 0:
                     stop_loss_level = entry_price_decimal * (Decimal(1) - sl_percent)
                     if current_price_decimal <= stop_loss_level:
-                        logger.info(f"!!! STOP-LOSS ATTEINT ({current_price_decimal:.4f} <= {stop_loss_level:.4f}) pour {symbol} !!!")
+                        logger.info(f"!!! STOP-LOSS TRIGGERED ({current_price_decimal:.4f} <= {stop_loss_level:.4f}) for {symbol} !!!")
+                        # Execute exit in a separate thread
                         threading.Thread(target=bot_core.execute_exit, args=("Stop-Loss",), daemon=True).start()
-                        return
-            except (InvalidOperation, ValueError) as e:
-                 logger.error(f"check_sl_tp: Erreur calcul Stop Loss (SL %: {sl_percent_config}): {e}")
+                        return # Exit function after triggering SL
+            except (InvalidOperation, ValueError, TypeError) as e:
+                 logger.error(f"check_sl_tp: Error calculating Stop Loss (SL %: {sl_percent_config}): {e}")
 
-        # Take Profit (seulement si SL non atteint)
+        # --- Take Profit Check (only if SL was not triggered) ---
         if tp_percent_config is not None:
             try:
-                tp_percent = Decimal(str(tp_percent_config))
+                tp_percent = Decimal(str(tp_percent_config)) # Ensure Decimal
                 if tp_percent > 0:
                     take_profit_level = entry_price_decimal * (Decimal(1) + tp_percent)
+                    # Use best bid price for TP check as well (price we can sell at)
                     if current_price_decimal >= take_profit_level:
-                        logger.info(f"!!! TAKE-PROFIT ATTEINT ({current_price_decimal:.4f} >= {take_profit_level:.4f}) pour {symbol} !!!")
+                        logger.info(f"!!! TAKE-PROFIT TRIGGERED ({current_price_decimal:.4f} >= {take_profit_level:.4f}) for {symbol} !!!")
+                        # Execute exit in a separate thread
                         threading.Thread(target=bot_core.execute_exit, args=("Take-Profit",), daemon=True).start()
-                        return
-            except (InvalidOperation, ValueError) as e:
-                 logger.error(f"check_sl_tp: Erreur calcul Take Profit (TP %: {tp_percent_config}): {e}")
+                        return # Exit function after triggering TP
+            except (InvalidOperation, ValueError, TypeError) as e:
+                 logger.error(f"check_sl_tp: Error calculating Take Profit (TP %: {tp_percent_config}): {e}")
 
     except (InvalidOperation, TypeError, KeyError) as e:
-        logger.error(f"check_sl_tp: Erreur interne (BookTicker): {e}", exc_info=True)
+        # Catch errors related to Decimal conversion or missing keys
+        logger.error(f"check_sl_tp: Internal error processing prices: {e}", exc_info=True)
     except Exception as e:
+         # Catch any other unexpected errors
          logger.critical(f"!!! CRITICAL Exception in check_sl_tp: {e} !!!", exc_info=True)
 
-# --- Gestionnaire Depth ---
+# --- Depth Handler ---
 def process_depth_message(msg: Dict[str, Any]):
-    """Callback pour @depth. Met à jour le snapshot de profondeur via StateManager."""
+    """Callback for @depth. Updates depth snapshot via StateManager."""
     try:
+        # Validate message structure
         if isinstance(msg, dict) and msg.get('e') == 'depthUpdate' and 's' in msg:
             state_manager.update_depth_snapshot(msg)
-            # Pas de broadcast ici, c'est trop fréquent. Le ticker le fera.
+            # No broadcast here, ticker broadcast is sufficient and less frequent
         elif isinstance(msg, dict) and msg.get('e') == 'error':
             logger.error(f"Received WebSocket Depth error message: {msg}")
     except Exception as e:
         logger.critical(f"!!! CRITICAL Exception in process_depth_message: {e} !!!", exc_info=True)
 
-# --- Gestionnaire AggTrade ---
+# --- AggTrade Handler ---
 def process_agg_trade_message(msg: Dict[str, Any]):
-    """Callback pour @aggTrade. Stocke les derniers trades via StateManager."""
+    """Callback for @aggTrade. Stores recent trades via StateManager."""
     try:
+        # Validate message structure
         if isinstance(msg, dict) and msg.get('e') == 'aggTrade' and 's' in msg:
             state_manager.append_agg_trade(msg)
-            # Pas de broadcast ici.
+            # No broadcast here
         elif isinstance(msg, dict) and msg.get('e') == 'error':
             logger.error(f"Received WebSocket AggTrade error message: {msg}")
     except Exception as e:
         logger.critical(f"!!! CRITICAL Exception in process_agg_trade_message: {e} !!!", exc_info=True)
 
-# --- Gestionnaire Kline ---
+# --- Kline Handler ---
 def process_kline_message(msg: Dict[str, Any]):
-    """Callback pour @kline. Met à jour l'historique et déclenche la logique SWING."""
+    """Callback for @kline. Updates history and triggers SWING logic."""
     try:
+        # Validate message structure
         if isinstance(msg, dict) and msg.get('e') == 'kline' and 'k' in msg:
             kline_data = msg['k']
             symbol = kline_data.get('s')
-            is_closed = kline_data.get('x', False)
+            is_closed = kline_data.get('x', False) # Check if kline is closed
 
             if is_closed:
-                logger.debug(f"Bougie {symbol} ({kline_data.get('i')}) FERMÉE reçue.")
+                logger.debug(f"Kline {symbol} ({kline_data.get('i')}) CLOSED received.")
+                # Format kline data into the list structure expected by TA libraries/strategy
                 formatted_kline = [
                     kline_data.get('t'), kline_data.get('o'), kline_data.get('h'),
                     kline_data.get('l'), kline_data.get('c'), kline_data.get('v'),
                     kline_data.get('T'), kline_data.get('q'), kline_data.get('n'),
                     kline_data.get('V'), kline_data.get('Q'), kline_data.get('B')
                 ]
+                # Append the closed kline to the history deque
                 state_manager.append_kline(formatted_kline)
 
+                # Get current state and config for strategy check
                 current_state = state_manager.get_state()
                 current_config = config_manager.get_config()
                 strategy_type = current_config.get("STRATEGY_TYPE")
                 configured_symbol = current_state.get("symbol")
 
+                # Trigger SWING strategy logic only if configured and symbol matches
                 if strategy_type == 'SWING' and configured_symbol and symbol == configured_symbol:
-                    history_list = state_manager.get_kline_history()
+                    kline_history = state_manager.get_kline_history()
                     required_len = state_manager.get_required_klines()
-                    current_len = len(history_list)
+                    current_len = len(kline_history)
 
+                    # Ensure enough history is available for calculations
                     if current_len < required_len:
-                        logger.info(f"Kline WS (SWING): Historique ({current_len}/{required_len}) insuffisant.")
+                        logger.info(f"Kline WS (SWING): History ({current_len}/{required_len}) insufficient for analysis.")
                         return
 
-                    logger.debug(f"Kline WS (SWING): Calcul stratégie EMA/RSI sur {current_len} bougies...")
-                    signals_df = strategy.calculate_indicators_and_signals(history_list, current_config)
+                    logger.debug(f"Kline WS (SWING): Calculating strategy indicators/signals on {current_len} klines...")
+                    # Calculate indicators and signals using the strategy module
+                    signals_df = strategy.calculate_indicators_and_signals(kline_history, current_config)
 
                     if signals_df is None or signals_df.empty:
-                        logger.warning("Kline WS (SWING): Échec calcul indicateurs/signaux.")
+                        logger.warning("Kline WS (SWING): Failed to calculate indicators/signals.")
                         return
 
+                    # Get the latest signal data
                     current_data = signals_df.iloc[-1]
                     is_in_position = current_state.get("in_position")
 
                     if not is_in_position:
-                        logger.debug("Kline WS (SWING): Vérification conditions d'entrée...")
+                        # Check entry conditions if not currently in a position
+                        logger.debug("Kline WS (SWING): Checking entry conditions...")
                         available_balance = current_state.get("available_balance", 0.0)
                         symbol_info = binance_client_wrapper.get_symbol_info(configured_symbol)
                         if symbol_info:
@@ -228,20 +271,18 @@ def process_kline_message(msg: Dict[str, Any]):
                                 available_balance, symbol_info
                             )
                             if entry_order_params:
-                                logger.info("Kline WS (SWING): Signal d'entrée détecté. Lancement placement ordre...")
-                                # La logique de placement et mise à jour état est maintenant dans bot_core
-                                # On pourrait lancer un thread ici pour appeler une fonction dans bot_core
-                                # Ou, plus simple pour l'instant, on log juste le signal
-                                # Le placement réel se fera via une autre logique ou manuellement
-                                logger.warning("Kline WS (SWING): Placement ordre non implémenté directement ici. Signal loggué.")
-                                # TODO: Décider comment déclencher l'ordre (ex: via API, autre thread?)
+                                logger.info("Kline WS (SWING): Entry signal detected. Triggering order placement...")
+                                # TODO: Implement actual order placement, likely via bot_core or API call
+                                logger.warning("Kline WS (SWING): Order placement not implemented here. Signal logged.")
                         else:
-                            logger.error(f"Kline WS (SWING): Impossible récupérer symbol_info pour {configured_symbol}.")
+                            logger.error(f"Kline WS (SWING): Cannot retrieve symbol_info for {configured_symbol}.")
 
                     elif is_in_position:
-                        logger.debug("Kline WS (SWING): Vérification conditions sortie (indicateurs)...")
+                        # Check exit conditions based on indicators if in a position
+                        logger.debug("Kline WS (SWING): Checking indicator-based exit conditions...")
                         if strategy.check_exit_conditions(current_data, configured_symbol):
-                            logger.info("Kline WS (SWING): Signal sortie (indicateur) détecté. Lancement execute_exit...")
+                            logger.info("Kline WS (SWING): Indicator exit signal detected. Launching execute_exit...")
+                            # Execute exit in a separate thread
                             threading.Thread(target=bot_core.execute_exit, args=("Signal Indicateur (Kline WS)",), daemon=True).start()
 
         elif isinstance(msg, dict) and msg.get('e') == 'error':
@@ -250,116 +291,149 @@ def process_kline_message(msg: Dict[str, Any]):
     except Exception as e:
         logger.critical(f"!!! CRITICAL Exception in process_kline_message: {e} !!!", exc_info=True)
 
-# --- Gestionnaire User Data ---
+# --- User Data Handler ---
 def process_user_data_message(data: Dict[str, Any]):
-    """Traite les messages du User Data Stream (ordres, positions)."""
-    logger.info(f"--- User Data Message Reçu --- Type: {data.get('e')}") # <--- AJOUTER CE LOG
+    """Processes messages from the User Data Stream (orders, positions)."""
     event_type = data.get('e')
+    logger.info(f"--- User Data Message Received --- Type: {event_type}")
 
-    if event_type == 'executionReport':
-        order_status = data.get('X') # Statut de l'exécution de l'ordre
-        order_id = data.get('i') # ID de l'ordre
-        client_order_id = data.get('c') # ID client de l'ordre
-        order_type = data.get('o') # Type d'ordre (LIMIT, MARKET, etc.)
-        side = data.get('S') # Côté (BUY, SELL)
-        logger.info(f"Execution Report: OrderID={order_id}, Status={order_status}, Side={side}, Type={order_type}") # <--- AJOUTER LOG DÉTAILLÉ
+    try:
+        if event_type == 'executionReport':
+            _handle_execution_report(data)
+        elif event_type == 'outboundAccountPosition':
+            _handle_account_position(data)
+        elif event_type == 'balanceUpdate':
+             _handle_balance_update(data)
+        else:
+            logger.debug(f"User Data: Unhandled event type '{event_type}': {data}")
+    except Exception as e:
+        logger.error(f"Error processing User Data message (Type: {event_type}): {e} - Data: {data}", exc_info=True)
 
-        # Mettre à jour l'historique
-        state_manager.add_order_to_history(data) # add_order_to_history loggue déjà
 
-        # Logique spécifique basée sur le statut
-        if order_status == 'FILLED':
-            logger.info(f"Order {order_id} FILLED.")
-            # Si c'était un ordre d'entrée (BUY pour nous)
-            if side == 'BUY':
-                try:
-                    exec_qty = float(data.get('z', 0)) # Quantité exécutée cumulée
-                    quote_qty = float(data.get('Z', 0)) # Montant quote exécuté cumulé
-                    if exec_qty > 0:
-                        avg_price = quote_qty / exec_qty
-                        entry_timestamp = data.get('T', int(time.time() * 1000)) # Timestamp transaction
-                        logger.info(f"Calcul entrée: Qty={exec_qty}, QuoteQty={quote_qty}, AvgPrice={avg_price}") # <--- AJOUTER LOG CALCUL
-                        state_updates = {
-                            "in_position": True,
-                            "entry_details": {
-                                "order_id": order_id,
-                                "avg_price": avg_price,
-                                "quantity": exec_qty,
-                                "timestamp": entry_timestamp,
-                            },
-                            "open_order_id": None, # Nettoyer si c'était un LIMIT rempli
-                            "open_order_timestamp": None,
-                        }
-                        state_manager.update_state(state_updates)
-                        state_manager.save_persistent_data() # Sauvegarder l'état d'entrée
-                        broadcast_state_update() # Diffuser le nouvel état
-                        logger.info(f"État mis à jour: EN POSITION @ {avg_price:.4f}, Qty={exec_qty}")
-                    else:
-                        logger.warning(f"Ordre BUY {order_id} FILLED mais quantité exécutée nulle?")
-                except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
-                    logger.error(f"Erreur traitement ordre BUY FILLED {order_id}: {e}", exc_info=True)
+def _handle_execution_report(data: dict):
+    """Handles order execution updates."""
+    order_id = data.get('i') # Order ID
+    symbol = data.get('s') # Symbol
+    side = data.get('S') # Side (BUY/SELL)
+    order_type = data.get('o') # Order Type (LIMIT, MARKET, etc.)
+    status = data.get('X') # Execution Status (NEW, FILLED, CANCELED, etc.)
 
-            # Si c'était un ordre de sortie (SELL pour nous)
-            elif side == 'SELL':
-                logger.info(f"Ordre SELL {order_id} FILLED. Mise à jour état: HORS POSITION.")
-                state_updates = {
-                    "in_position": False,
-                    "entry_details": None,
-                    "open_order_id": None, # Nettoyer si c'était un LIMIT rempli
-                    "open_order_timestamp": None,
-                }
-                state_manager.update_state(state_updates)
-                state_manager.save_persistent_data() # Sauvegarder l'état de sortie
-                broadcast_state_update() # Diffuser le nouvel état
+    logger.info(f"Execution Report: OrderID={order_id}, Status={status}, Side={side}, Type={order_type}")
 
-        elif order_status in ['CANCELED', 'REJECTED', 'EXPIRED']:
-            logger.warning(f"Order {order_id} {order_status}.")
-            # Si l'ordre annulé/rejeté était notre ordre ouvert
-            open_order_id = state_manager.get_state("open_order_id")
-            if open_order_id == order_id:
-                logger.info(f"Nettoyage de l'ordre ouvert {order_id} suite à {order_status}.")
-                state_manager.update_state({"open_order_id": None, "open_order_timestamp": None})
-                broadcast_state_update()
+    # Update order history via StateManager
+    # This also handles broadcasting the history update
+    state_manager.add_order_to_history(data)
 
-        elif order_status == 'NEW':
-             logger.info(f"Order {order_id} NEW.")
-             # Si c'est un ordre LIMIT, on pourrait vouloir stocker son ID
-             if order_type == 'LIMIT':
-                  state_manager.update_state({
-                       "open_order_id": order_id,
-                       "open_order_timestamp": data.get('T', int(time.time() * 1000)),
-                  })
-                  broadcast_state_update()
+    # --- Update Core Bot State Based on Order Status ---
+    state_updates = {}
+    current_state = state_manager.get_state() # Get current state for checks
 
-        # Ajouter d'autres statuts si nécessaire (PARTIALLY_FILLED, etc.)
+    # Clear open order ID if this report confirms it's no longer NEW/PARTIALLY_FILLED
+    if status not in ['NEW', 'PARTIALLY_FILLED'] and current_state.get("open_order_id") == order_id:
+        logger.debug(f"ExecutionReport: Clearing open order ID {order_id} due to status {status}.")
+        state_updates["open_order_id"] = None
+        state_updates["open_order_timestamp"] = None
 
-    elif event_type == 'outboundAccountPosition':
-        # Mise à jour des soldes (optionnel, peut être redondant si executionReport est bien géré)
-        logger.debug(f"Account Position Update: {data}")
-        # Implémenter la mise à jour des soldes si nécessaire
-        pass
-    elif event_type == 'balanceUpdate':
-        # Mise à jour d'un solde spécifique (ex: suite à un dépôt/retrait)
-        logger.debug(f"Balance Update: {data}")
-        # Implémenter la mise à jour si nécessaire
-        pass
-    else:
-        logger.warning(f"Type d'événement User Data non géré: {event_type}")
-# --- Vérification Timeout Ordre Limit ---
+    # Update position state ONLY if the order is FILLED
+    # Avoid double-updating if already handled by REST API response in api_routes
+    if status == 'FILLED':
+        if side == 'BUY' and not current_state.get("in_position"):
+            # Enter position based on WS confirmation (if not already set by REST)
+            try:
+                exec_qty = float(data.get('z', 0)) # Cumulative filled quantity
+                quote_qty = float(data.get('Z', 0)) # Cumulative quote asset transacted amount
+                if exec_qty > 0:
+                    avg_price = quote_qty / exec_qty
+                    entry_timestamp = data.get('T', int(time.time() * 1000)) # Transaction time
+                    logger.info(f"ExecutionReport: Entering position via WS confirmation for order {order_id}.")
+                    logger.info(f"Calculated Entry: Qty={exec_qty}, QuoteQty={quote_qty}, AvgPrice={avg_price}")
+                    state_updates["in_position"] = True
+                    state_updates["entry_details"] = {
+                        "order_id": order_id, "avg_price": avg_price,
+                        "quantity": exec_qty, "timestamp": entry_timestamp,
+                    }
+                    # Save persistent state for entry
+                    state_manager.save_persistent_data()
+                else:
+                     logger.warning(f"ExecutionReport: BUY order {order_id} FILLED but executed quantity is zero?")
+            except (ValueError, TypeError, ZeroDivisionError, InvalidOperation) as e:
+                 logger.error(f"ExecutionReport: Error processing FILLED BUY order {order_id}: {e}", exc_info=True)
+
+        elif side == 'SELL' and current_state.get("in_position"):
+            # Exit position based on WS confirmation
+            logger.info(f"ExecutionReport: Exiting position via WS confirmation for order {order_id}.")
+            state_updates["in_position"] = False
+            state_updates["entry_details"] = None
+            # Save persistent state for exit
+            state_manager.save_persistent_data()
+
+    # Apply state updates if any were determined
+    if state_updates:
+        state_manager.update_state(state_updates)
+        broadcast_state_update() # Broadcast the state change
+
+
+def _handle_account_position(data: dict):
+    """Handles account position updates (balance changes)."""
+    balances = data.get('B', []) # List of balances that changed
+    state_updates = {}
+    quote_asset = state_manager.get_state("quote_asset")
+    base_asset = state_manager.get_state("base_asset")
+
+    for balance_info in balances:
+        asset = balance_info.get('a') # Asset symbol
+        free_balance_str = balance_info.get('f') # Free balance
+
+        if asset and free_balance_str is not None:
+            try:
+                free_balance = float(free_balance_str)
+                # Update quote asset balance if changed
+                if asset == quote_asset:
+                    if abs(state_manager.get_state("available_balance") - free_balance) > 1e-9: # Float comparison
+                        logger.info(f"Account Position: {asset} balance updated to {free_balance:.4f}")
+                        state_updates["available_balance"] = free_balance
+                # Update base asset quantity if changed
+                elif asset == base_asset:
+                     if abs(state_manager.get_state("symbol_quantity") - free_balance) > 1e-9: # Float comparison
+                        logger.info(f"Account Position: {asset} quantity updated to {free_balance:.8f}")
+                        state_updates["symbol_quantity"] = free_balance
+            except (ValueError, TypeError):
+                logger.warning(f"Account Position: Could not convert balance for {asset}: '{free_balance_str}'")
+
+    # Apply and broadcast if any balances were updated
+    if state_updates:
+        state_manager.update_state(state_updates)
+        broadcast_state_update()
+
+
+def _handle_balance_update(data: dict):
+    """Handles specific balance updates (deposits, withdrawals)."""
+    asset = data.get('a')
+    delta = data.get('d') # Change in balance
+    clear_time = data.get('T') # Event time
+    logger.info(f"Balance Update Event: Asset={asset}, Delta={delta}, ClearTime={clear_time}")
+    # This event is less critical for trading logic but good to log.
+    # Optionally, trigger a full balance refresh if needed, but might be overkill.
+
+
+# --- Limit Order Timeout Check ---
 def check_limit_order_timeout(
     symbol: str,
     order_id: int,
     order_timestamp: Optional[int],
     current_config: Dict[str, Any]
 ):
-    """Vérifie si un ordre LIMIT ouvert a dépassé son timeout."""
-    if not order_id or not order_timestamp: return
+    """Checks if an open LIMIT order has exceeded its timeout."""
+    if not order_id or not order_timestamp:
+        return # No open order or timestamp to check
 
-    timeout_ms = current_config.get("SCALPING_LIMIT_ORDER_TIMEOUT_MS", 5000)
+    timeout_ms = current_config.get("SCALPING_LIMIT_ORDER_TIMEOUT_MS", 5000) # Get timeout from config
     current_time_ms = int(time.time() * 1000)
 
+    # Check if the elapsed time exceeds the timeout
     if current_time_ms - order_timestamp > timeout_ms:
-        logger.warning(f"Ordre LIMIT {order_id} a dépassé le timeout ({timeout_ms}ms). Tentative d'annulation...")
+        logger.warning(f"LIMIT Order {order_id} exceeded timeout ({timeout_ms}ms). Attempting cancellation...")
+        # Cancel the order in a separate thread
         threading.Thread(target=bot_core.cancel_scalping_order, args=(symbol, order_id), daemon=True).start()
 
 # --- Exports ---

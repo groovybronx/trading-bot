@@ -15,13 +15,14 @@
         <section id="bot-status">
             <h2>Statut du Bot</h2>
             <p>État : <span id="status-value">Inconnu</span></p>
-            <!-- AJOUT: Affichage de la stratégie active -->
             <p>Stratégie : <span id="strategy-type-value">N/A</span></p>
             <p>Symbole : <span id="symbol-value">N/A</span></p>
             <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour SWING)</small></p>
             <p>Balance (<span id="quote-asset-label">USDT</span>) : <span id="balance-value">N/A</span></p>
             <p>Quantité (<span id="base-asset-label">N/A</span>) : <span id="quantity-value">N/A</span></p>
-            <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="price-value">N/A</span></p>
+            <!-- *** CORRECTION: Changed id from "price-value" to "current-price" *** -->
+            <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="current-price" class="status-value">N/A</span></p>
+            <!-- *** FIN CORRECTION *** -->
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
         </section>
 
@@ -66,7 +67,6 @@
         <section id="parameters">
              <h2>Paramètres de Stratégie</h2>
 
-             <!-- AJOUT: Sélecteur de Stratégie -->
              <div>
                  <label for="param-strategy-type">Type de Stratégie :</label>
                  <select id="param-strategy-type" name="STRATEGY_TYPE">
@@ -76,15 +76,12 @@
              </div>
              <hr>
 
-             <!-- AJOUT: Conteneur pour les paramètres SWING -->
              <div id="swing-params">
                  <h3>Paramètres SWING</h3>
                  <div class="param-grid">
                      <div>
                         <label for="param-timeframe">Timeframe :</label>
                         <select id="param-timeframe" name="TIMEFRAME_STR">
-                            <!-- Option 1s enlevée car moins pertinente pour Swing, mais peut rester si besoin -->
-                            <!-- <option value="1s">1s</option> -->
                             <option value="1m">1m</option>
                             <option value="3m">3m</option>
                             <option value="5m">5m</option>
@@ -149,7 +146,6 @@
                  </div>
              </div> <!-- Fin swing-params -->
 
-             <!-- AJOUT: Conteneur pour les paramètres SCALPING (caché par défaut) -->
              <div id="scalping-params" style="display: none;">
                  <h3>Paramètres SCALPING</h3>
                  <div class="param-grid">
@@ -165,8 +161,6 @@
                          <label for="param-limit-timeout">Timeout Ordre Limit (ms) :</label>
                          <input type="number" id="param-limit-timeout" name="SCALPING_LIMIT_ORDER_TIMEOUT_MS" min="500" max="60000" step="100">
                      </div>
-                     <!-- Note: Pour scalping, le risque/allocation est souvent implicite (tout le capital dispo ou fixe) -->
-                     <!-- On pourrait ajouter des paramètres spécifiques si la stratégie backend les utilise -->
                  </div>
              </div> <!-- Fin scalping-params -->
 

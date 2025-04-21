@@ -14,14 +14,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const timeframeValue = document.getElementById('timeframe-value');
     const balanceValue = document.getElementById('balance-value');
     const quantityValue = document.getElementById('quantity-value');
-    const priceValue = document.getElementById('price-value');
+    const priceValue = document.getElementById('current-price'); // Corrected ID reference
     const positionValue = document.getElementById('position-value');
     const quoteAssetLabel = document.getElementById('quote-asset-label');
     const baseAssetLabel = document.getElementById('base-asset-label');
     const symbolPriceLabel = document.getElementById('symbol-price-label');
     const orderHistoryBody = document.getElementById('order-history-body');
     const orderHistoryPlaceholder = document.getElementById('order-history-placeholder');
-    const logOutput = document.getElementById('log-output'); // Utiliser log-output au lieu de logOutput
+    const logOutput = document.getElementById('log-output');
     const startBotBtn = document.getElementById('start-bot-btn');
     const stopBotBtn = document.getElementById('stop-bot-btn');
     const saveParamsBtn = document.getElementById('save-params-btn');
@@ -64,11 +64,15 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (Math.abs(number) > 10) decimals = 4;
         else if (Math.abs(number) > 0.1) decimals = 6;
         // Use Intl.NumberFormat for locale-aware formatting (optional but good practice)
-        return number.toLocaleString(undefined, {
-            minimumFractionDigits: decimals,
-            maximumFractionDigits: decimals
-        });
-        // return number.toFixed(decimals); // Alternative simple
+        try {
+            return number.toLocaleString(undefined, {
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            });
+        } catch (e) {
+            console.error("Error formatting number:", num, e);
+            return number.toFixed(decimals); // Fallback to simple toFixed
+        }
     }
 
     function formatTimestamp(timestamp) {
@@ -104,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const logEntry = document.createElement('div');
-        // Utiliser textContent est plus sûr que innerHTML pour les messages venant de l'extérieur
+        // Use textContent for safety against XSS if messages could contain HTML
         logEntry.textContent = message;
         logEntry.className = `log-entry log-${level}`; // Add classes for styling
         logOutput.appendChild(logEntry);
@@ -125,48 +129,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ws.onopen = () => {
             console.log('WebSocket connection established');
-            // Ne pas effacer les logs précédents, juste ajouter un message de connexion
             appendLog("WebSocket connecté.", "info");
-            // Request initial state upon connection
+            // Request initial state upon connection (API call)
             fetchBotState();
+            // Note: Initial history is sent by backend upon connection via WS now
         };
 
         ws.onmessage = (event) => {
             try {
-                // Le backend envoie maintenant du JSON
                 const data = JSON.parse(event.data);
-                // console.debug('WebSocket message received:', data); // Décommenter pour debug détaillé
+                console.debug('WebSocket message received:', data); // Keep for debugging
 
-                // --- MODIFIÉ: Gérer les types de messages JSON ---
                 switch (data.type) {
                     case 'log':
-                        appendLog(data.message, 'log'); // Niveau 'log' par défaut
+                        appendLog(data.message, 'log');
                         break;
                     case 'info':
-                        appendLog(data.message, 'info'); // Niveau 'info'
+                        appendLog(data.message, 'info');
                         break;
-                    case 'error': // Erreur spécifique envoyée par le backend
+                    case 'error': // Specific error message from backend
                         appendLog(`ERREUR Backend: ${data.message}`, 'error');
                         break;
-                    case 'warning': // <<< CHECK THIS CASE
-                        addLogMessage(data.message, 'warning');
+                    case 'warning': // Use appendLog consistently
+                        appendLog(data.message, 'warn');
                         break;
-                    case 'critical': // <<< CHECK THIS CASE (often handled like error)
-                        addLogMessage(data.message, 'error');
+                    case 'critical': // Use appendLog consistently
+                        appendLog(`CRITICAL: ${data.message}`, 'error'); // Treat critical as error visually
                         break;
-                    
                     case 'status_update':
-                        // Mettre à jour l'UI avec l'état reçu
                         if (data.state) {
+                            console.log("Status Update Received:", data.state); // Debug log
                             updateUI(data.state);
-                            appendLog("État du bot mis à jour.", "info");
+                            // appendLog("État du bot mis à jour.", "info"); // Can be noisy
                         } else {
                             console.warn("Received status_update without state data:", data);
                         }
                         break;
                     case 'order_history_update':
-                        // Mettre à jour le tableau de l'historique des ordres
                         if (data.history) {
+                            console.log("Order History Update Received:", data.history); // Debug log
                             updateOrderHistory(data.history);
                             appendLog("Historique des ordres mis à jour.", "info");
                         } else {
@@ -174,49 +175,45 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         break;
                     case 'ping':
-                        // C'est le message keep-alive, on peut l'ignorer
-                        // console.debug('WebSocket ping received');
+                        // console.debug('WebSocket ping received'); // Ignore ping
                         break;
                     default:
-                        // Type de message inconnu
-                        console.warn('Message WebSocket de type inconnu reçu:', data);
+                        console.warn('Unknown WebSocket message type received:', data);
                         appendLog(`[WS Type Inconnu: ${data.type}] ${JSON.stringify(data.message || data.payload || data)}`, 'warn');
                 }
-                // --- FIN MODIFIÉ ---
 
             } catch (error) {
-                // Erreur si le message reçu n'est PAS du JSON valide
-                console.error('Error processing WebSocket message (JSON malformé?):', error);
+                console.error('Error processing WebSocket message (Malformed JSON?):', error);
                 appendLog(`Erreur traitement WS (JSON invalide?): ${event.data}`, 'error');
             }
         };
 
         ws.onerror = (error) => {
-            // Cette erreur se produit souvent si le serveur backend n'est pas joignable
             console.error('WebSocket error:', error);
             appendLog('Erreur de connexion WebSocket. Le backend est-il démarré et accessible?', 'error');
             statusValue.textContent = 'Erreur Connexion';
-            statusValue.className = 'status-error'; // Utiliser une classe d'erreur
+            statusValue.className = 'status-error';
             stopBotBtn.disabled = true;
-            startBotBtn.disabled = false; // Permettre de réessayer de démarrer (ce qui refera un fetch)
-            ws = null; // Important de réinitialiser ws ici
+            startBotBtn.disabled = false;
+            ws = null; // Reset ws variable
         };
 
         ws.onclose = (event) => {
             console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
-            // Ne pas afficher si la fermeture était propre (code 1000 ou 1001) et que ws est null (déjà géré)
+            // Only log warning if closure was unexpected
             if (ws && event.code !== 1000 && event.code !== 1001) {
                  appendLog(`Connexion WebSocket fermée (Code: ${event.code}). Tentative de reconnexion possible.`, 'warn');
-            } else if (!ws) {
+            } else if (!ws) { // If ws is already null, it was likely intentional or handled by onerror
                  appendLog(`Connexion WebSocket fermée.`, 'info');
             }
+            // Update UI to reflect disconnected state
             statusValue.textContent = 'Déconnecté';
-            statusValue.className = 'status-stopped';
+            statusValue.className = 'status-stopped'; // Use 'stopped' style for disconnected
             stopBotBtn.disabled = true;
-            startBotBtn.disabled = false;
-            ws = null; // Réinitialiser ws variable
-            // Optionnel: Tentative de reconnexion automatique après un délai
-            // setTimeout(connectWebSocket, 5000); // Attention aux boucles infinies si le serveur est down
+            startBotBtn.disabled = false; // Allow attempting to reconnect via start
+            ws = null; // Reset ws variable
+            // Optional: Implement automatic reconnection logic here if desired
+            // setTimeout(connectWebSocket, 5000); // Be careful with infinite loops
         };
     }
 
@@ -227,53 +224,68 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn("updateUI called with null or undefined state");
             return;
         }
-        // console.log("Updating UI with state:", state); // Debug
+        console.log("Updating UI with state:", state); // Keep this debug log
 
         // Update Bot Status section
         statusValue.textContent = state.status || 'Inconnu';
-        statusValue.className = state.status === 'RUNNING' ? 'status-running' : (state.status === 'STOPPED' ? 'status-stopped' : 'status-error');
-        strategyTypeValueSpan.textContent = state.config.STRATEGY_TYPE || 'N/A';
+        // Apply CSS class based on status
+        statusValue.className = `status-${(state.status || 'unknown').toLowerCase()}`;
+        strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A'; // Use optional chaining
         symbolValue.textContent = state.symbol || 'N/A';
         timeframeValue.textContent = state.timeframe || 'N/A';
         quoteAssetLabel.textContent = state.quote_asset || 'USDT';
         baseAssetLabel.textContent = state.base_asset || 'N/A';
         symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
-        balanceValue.textContent = formatNumber(state.available_balance, 2);
-        quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
+        balanceValue.textContent = formatNumber(state.available_balance, 2); // Format quote balance
+        quantityValue.textContent = formatNumber(state.symbol_quantity, 8); // Format base quantity
 
-        // Update current price
-        // Utiliser state.current_price s'il est fourni directement par le backend, sinon fallback sur book ticker
-        if (state.current_price) {
-             priceValue.textContent = formatNumber(state.current_price);
-        } else if (state.latest_book_ticker && state.latest_book_ticker.b) {
-             priceValue.textContent = formatNumber(state.latest_book_ticker.b);
-        } else {
-             priceValue.textContent = 'N/A';
+        // --- Update current price using latest_book_ticker ---
+        let displayPrice = 'N/A';
+        if (state.latest_book_ticker && state.latest_book_ticker.b && state.latest_book_ticker.a) {
+            try {
+                const bid = parseFloat(state.latest_book_ticker.b);
+                const ask = parseFloat(state.latest_book_ticker.a);
+                if (!isNaN(bid) && !isNaN(ask) && ask > 0) { // Ensure ask is positive for mid-price calc
+                    // Display mid-price with appropriate precision
+                    const midPrice = (bid + ask) / 2;
+                    displayPrice = formatNumber(midPrice, 2); // Use formatNumber for consistency
+                } else if (!isNaN(bid)) {
+                    displayPrice = formatNumber(bid, 2); // Fallback to bid if ask is invalid
+                }
+            } catch (e) {
+                console.error("Error parsing ticker price:", e, state.latest_book_ticker);
+                displayPrice = "Erreur";
+            }
         }
+        priceValue.textContent = displayPrice;
+        // --- End Price Update ---
 
         // Update Position Status
         if (state.in_position && state.entry_details) {
-            const entryPrice = formatNumber(state.entry_details.avg_price);
-            const entryQty = formatNumber(state.entry_details.quantity);
+            const entryPrice = formatNumber(state.entry_details.avg_price, 2); // Format entry price
+            const entryQty = formatNumber(state.entry_details.quantity, 8); // Format entry quantity
             positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
-            positionValue.className = 'status-running';
+            positionValue.className = 'status-running'; // Use 'running' style for active position
         } else {
             positionValue.textContent = 'Aucune';
-            positionValue.className = '';
+            positionValue.className = ''; // Reset class
         }
 
-        // Update Control Buttons state
-        startBotBtn.disabled = state.status === 'RUNNING';
+        // Update Control Buttons state based on bot status
+        startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING';
         stopBotBtn.disabled = state.status !== 'RUNNING';
 
-        // Update Parameter Inputs
+        // Update Parameter Inputs if config is present
         if (state.config) {
+            // Only update inputs if the bot is NOT running to avoid overwriting user changes
+            // Or, alternatively, always update to reflect the backend's current config
+            // Let's always update for now to ensure consistency
             strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
             updateParameterVisibility(strategySelector.value);
 
             // SWING Params
-            paramTimeframe.value = state.config.TIMEFRAME_STR || '1h';
-            paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? ''; // Utiliser ?? pour gérer null/undefined
+            paramTimeframe.value = state.config.TIMEFRAME_STR || '1m'; // Default to 1m if missing
+            paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
             paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
             paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
             paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
@@ -295,60 +307,82 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateOrderHistory(history) {
-        if (!orderHistoryBody) return;
+        if (!orderHistoryBody) {
+            console.error("Order history table body not found!");
+            return;
+        }
         orderHistoryBody.innerHTML = ''; // Clear existing rows
 
-        if (!history || history.length === 0) {
-            // Clone and append placeholder if it exists
+        console.log("Updating order history table with data:", history); // Keep this debug log
+
+        if (!Array.isArray(history) || history.length === 0) {
+            // Use placeholder template if available
             if (orderHistoryPlaceholder) {
-                 const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true); // Use template content
-                 orderHistoryBody.appendChild(placeholderClone);
+                 try {
+                    const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true);
+                    orderHistoryBody.appendChild(placeholderClone);
+                 } catch (e) {
+                     console.error("Error using order history placeholder template:", e);
+                     // Fallback if template fails
+                     const row = orderHistoryBody.insertRow();
+                     const cell = row.insertCell();
+                     cell.colSpan = 10; // Adjust to number of columns
+                     cell.textContent = "Aucun ordre dans l'historique.";
+                     cell.style.textAlign = 'center';
+                 }
             } else {
-                 // Fallback if placeholder template is missing
+                 // Fallback if placeholder template ID is wrong or missing
                  const row = orderHistoryBody.insertRow();
                  const cell = row.insertCell();
-                 cell.colSpan = 10; // Adjust colspan based on actual columns
+                 cell.colSpan = 10; // Adjust to number of columns
                  cell.textContent = "Aucun ordre dans l'historique.";
                  cell.style.textAlign = 'center';
             }
             return;
         }
 
-        // Sort history by timestamp descending (most recent first)
-        // Ensure timestamps are numbers for correct sorting
+        // Sort history by timestamp descending (ensure timestamps are numbers)
         history.sort((a, b) => (parseInt(b.timestamp || 0)) - (parseInt(a.timestamp || 0)));
 
         history.forEach(order => {
-            const row = document.createElement('tr');
-            const performancePct = (order.performance_pct !== null && order.performance_pct !== undefined)
-                ? `${formatNumber(order.performance_pct * 100, 2)}%`
-                : 'N/A';
+            const row = document.createElement('tr'); // Create row element
 
-            // Calculate average price if price is zero or missing but quantities are present
-            let avgPrice = order.price;
-            if ((!avgPrice || parseFloat(avgPrice) === 0) && parseFloat(order.cummulativeQuoteQty) > 0 && parseFloat(order.executedQty) > 0) {
-                avgPrice = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
+            // Format performance percentage
+            const performancePctValue = order.performance_pct;
+            const performancePctText = (performancePctValue !== null && performancePctValue !== undefined)
+                ? `${formatNumber(performancePctValue * 100, 2)}%` // Format as percentage
+                : '-'; // Use hyphen for N/A
+
+            // Calculate average price if not directly available but quantities are
+            let avgPrice = order.price; // Use order price by default (for LIMIT)
+            const executedQtyNum = parseFloat(order.executedQty || 0);
+            const cummQuoteQtyNum = parseFloat(order.cummulativeQuoteQty || 0);
+
+            if ((!avgPrice || parseFloat(avgPrice) === 0) && cummQuoteQtyNum > 0 && executedQtyNum > 0) {
+                avgPrice = cummQuoteQtyNum / executedQtyNum; // Calculate average price
             }
 
-            // Display average price for BUY/SELL, or total value if preferred for SELL
-            const priceOrValue = formatNumber(avgPrice, 8);
-            // const priceOrValue = order.side === 'BUY'
-            //     ? formatNumber(avgPrice, 8)
-            //     : formatNumber(order.cummulativeQuoteQty, 2); // Alternative: Show total value for sells
+            // Format the price/value column
+            const priceOrValueText = formatNumber(avgPrice, 4); // Format avg price with 4 decimals
 
+            // Determine CSS classes for side and performance
+            const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
+            const perfClass = (performancePctValue === null || performancePctValue === undefined) ? '' : (performancePctValue >= 0 ? 'perf-positive' : 'perf-negative');
+
+            // Populate row using innerHTML for structure
             row.innerHTML = `
                 <td>${formatTimestamp(order.timestamp)}</td>
                 <td>${order.symbol || 'N/A'}</td>
-                <td class="${order.side === 'BUY' ? 'side-buy' : 'side-sell'}">${order.side || 'N/A'}</td>
+                <td class="${sideClass}">${order.side || 'N/A'}</td>
                 <td>${order.type || 'N/A'}</td>
-                <td>${formatNumber(order.origQty)}</td>
-                <td>${formatNumber(order.executedQty)}</td>
-                <td>${priceOrValue}</td>
+                <td>${formatNumber(order.origQty, 8)}</td>
+                <td>${formatNumber(order.executedQty, 8)}</td>
+                <td>${priceOrValueText}</td>
                 <td>${order.status || 'N/A'}</td>
-                <td class="${(order.performance_pct || 0) >= 0 ? 'perf-positive' : 'perf-negative'}">${performancePct}</td>
+                <td class="${perfClass}">${performancePctText}</td>
                 <td>${order.orderId || 'N/A'}</td>
             `;
-            orderHistoryBody.appendChild(row);
+            orderHistoryBody.appendChild(row); // Append the populated row
         });
     }
 
@@ -360,70 +394,74 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch(`${API_BASE_URL}/api/status`);
             if (!response.ok) {
-                // Try to get error message from backend response body
                 let errorMsg = `HTTP error! status: ${response.status}`;
                 try {
                     const errorResult = await response.json();
-                    errorMsg = errorResult.error || errorMsg;
-                } catch (e) { /* Ignore if response is not JSON */ }
+                    errorMsg = errorResult.message || errorMsg; // Use 'message' from backend JSON
+                } catch (e) { console.error("Error parsing error response:", e); }
                 throw new Error(errorMsg);
             }
             const state = await response.json();
+            // Update UI with fetched state (config, status etc.)
             updateUI(state);
-            updateOrderHistory(state.order_history);
-            appendLog("État initial et historique récupérés.", "info");
+            // Note: History is now primarily updated via WebSocket push
+            // updateOrderHistory(state.order_history); // Remove this if history isn't in /status
+            appendLog("État initial récupéré.", "info");
         } catch (error) {
             console.error('Error fetching bot state:', error);
             appendLog(`Erreur récupération état initial: ${error.message}`, 'error');
-            statusValue.textContent = 'Erreur';
+            statusValue.textContent = 'Erreur API';
             statusValue.className = 'status-error';
         }
     }
 
     async function startBot() {
         appendLog("Envoi de la commande Démarrer...", "info");
+        startBotBtn.disabled = true; // Disable button immediately
+        stopBotBtn.disabled = true; // Disable stop button too during start attempt
         try {
-            // Disable button immediately to prevent double clicks
-            startBotBtn.disabled = true;
             const response = await fetch(`${API_BASE_URL}/api/start`, { method: 'POST' });
-            const result = await response.json(); // Always try to parse JSON
+            const result = await response.json();
             if (!response.ok) {
-                throw new Error(result.error || `Erreur serveur: ${response.status}`);
+                throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
-            appendLog(result.message || 'Commande Démarrer envoyée avec succès.', 'info');
-            // UI state (like button disabling) will be updated via WebSocket 'status_update'
+            appendLog(result.message || 'Commande Démarrer envoyée.', 'info');
+            // UI state (buttons, status) will be updated via WebSocket 'status_update'
         } catch (error) {
             console.error('Error starting bot:', error);
             appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
-            // Re-enable button if start failed
-            startBotBtn.disabled = false;
+            startBotBtn.disabled = false; // Re-enable start button on failure
+            // Stop button state depends on whether bot was previously running or not
+            // Fetching state again might clarify, or rely on WS error state
+            fetchBotState();
         }
     }
 
     async function stopBot() {
         appendLog("Envoi de la commande Arrêter...", "info");
+        stopBotBtn.disabled = true; // Disable button immediately
+        startBotBtn.disabled = true; // Disable start button too during stop attempt
         try {
-            // Disable button immediately
-            stopBotBtn.disabled = true;
             const response = await fetch(`${API_BASE_URL}/api/stop`, { method: 'POST' });
-            const result = await response.json(); // Always try to parse JSON
+            const result = await response.json();
             if (!response.ok) {
-                throw new Error(result.error || `Erreur serveur: ${response.status}`);
+                throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
-            appendLog(result.message || 'Commande Arrêter envoyée avec succès.', 'info');
+            appendLog(result.message || 'Commande Arrêter envoyée.', 'info');
             // UI state will be updated via WebSocket 'status_update'
         } catch (error) {
             console.error('Error stopping bot:', error);
             appendLog(`Erreur à l'arrêt du bot: ${error.message}`, 'error');
-            // Re-enable button if stop failed (though state might be inconsistent)
-             stopBotBtn.disabled = false; // Or rely on WebSocket update
+            // Re-enable stop button? Or rely on WS update? Let's rely on WS.
+            // If WS fails, user might need to refresh.
+            fetchBotState(); // Fetch state to try and sync UI
         }
     }
 
     async function saveParameters() {
         paramSaveStatus.textContent = 'Sauvegarde en cours...';
         paramSaveStatus.className = 'status-saving';
-        saveParamsBtn.disabled = true; // Disable button during save
+        saveParamsBtn.disabled = true;
 
         const paramsToSend = {
             STRATEGY_TYPE: strategySelector.value,
@@ -444,18 +482,13 @@ document.addEventListener('DOMContentLoaded', () => {
             STOP_LOSS_PERCENTAGE: parseFloat(paramSl.value) || null,
             TAKE_PROFIT_PERCENTAGE: parseFloat(paramTp.value) || null,
             SCALPING_LIMIT_ORDER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
-            // --- AJOUT: Envoyer aussi les autres paramètres scalping si définis dans l'UI ---
-            // SCALPING_ORDER_TYPE: document.getElementById('param-scalping-order-type').value, // Exemple si vous ajoutez ces champs
-            // SCALPING_LIMIT_TIF: document.getElementById('param-scalping-tif').value,
-            // SCALPING_DEPTH_LEVELS: parseInt(document.getElementById('param-scalping-depth-levels').value) || null,
-            // SCALPING_DEPTH_SPEED: document.getElementById('param-scalping-depth-speed').value,
-            // SCALPING_SPREAD_THRESHOLD: parseFloat(document.getElementById('param-scalping-spread').value) || null,
-            // SCALPING_IMBALANCE_THRESHOLD: parseFloat(document.getElementById('param-scalping-imbalance').value) || null,
-            // SCALPING_MIN_TRADE_VOLUME: parseFloat(document.getElementById('param-scalping-min-volume').value) || null,
-            // --- FIN AJOUT ---DER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
+            // Add other SCALPING params if they exist in the HTML form
+            // SCALPING_ORDER_TYPE: document.getElementById('param-scalping-order-type')?.value || 'MARKET',
+            // SCALPING_LIMIT_TIF: document.getElementById('param-scalping-tif')?.value || 'GTC',
+            // etc.
         };
 
-        // Clean object: remove keys with null or empty string values if backend prefers that
+        // Optional: Clean object by removing null/empty values if backend handles missing keys better
         // Object.keys(paramsToSend).forEach(key => {
         //     if (paramsToSend[key] === null || paramsToSend[key] === '') {
         //         delete paramsToSend[key];
@@ -468,18 +501,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(paramsToSend),
             });
-            const result = await response.json(); // Always try to parse JSON
+            const result = await response.json();
 
             if (!response.ok) {
-                throw new Error(result.error || `Erreur serveur: ${response.status}`);
+                throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
-            paramSaveStatus.textContent = result.message || 'Paramètres sauvegardés avec succès!';
+            paramSaveStatus.textContent = result.message || 'Paramètres sauvegardés!';
             paramSaveStatus.className = 'status-success';
             // Re-fetch state to confirm update in UI inputs immediately
-            fetchBotState();
+            // (Backend should broadcast the state update anyway, but this can be faster)
+            // fetchBotState(); // Optional: remove if WS update is reliable enough
         } catch (error) {
             console.error('Error saving parameters:', error);
-            paramSaveStatus.textContent = `Erreur de sauvegarde: ${error.message}`;
+            paramSaveStatus.textContent = `Erreur sauvegarde: ${error.message}`;
             paramSaveStatus.className = 'status-error';
         } finally {
             // Clear status message after a delay
@@ -492,18 +526,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Event Listeners ---
-    startBotBtn.addEventListener('click', startBot);
-    stopBotBtn.addEventListener('click', stopBot);
-    saveParamsBtn.addEventListener('click', saveParameters);
+    if (startBotBtn) startBotBtn.addEventListener('click', startBot);
+    if (stopBotBtn) stopBotBtn.addEventListener('click', stopBot);
+    if (saveParamsBtn) saveParamsBtn.addEventListener('click', saveParameters);
 
-    strategySelector.addEventListener('change', (event) => {
-        updateParameterVisibility(event.target.value);
-    });
+    if (strategySelector) {
+        strategySelector.addEventListener('change', (event) => {
+            updateParameterVisibility(event.target.value);
+        });
+    }
 
 
     // --- Initial Setup ---
     // Set initial visibility based on the default selected strategy in HTML
-    updateParameterVisibility(strategySelector.value);
+    if (strategySelector) {
+        updateParameterVisibility(strategySelector.value);
+    }
     // Connect WebSocket (this will also trigger fetchBotState on successful connection)
     connectWebSocket();
 
