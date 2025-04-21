@@ -648,7 +648,7 @@ def _handle_websocket_message(ws_client_instance, raw_msg: str):
     Callback for all WebSocket messages (Combined Stream).
     Decodes JSON, extracts data, and routes to specific handlers.
     """
-    # logger.debug(f"Raw Combined WS message received: {raw_msg}") # Keep commented unless deep debugging needed
+    logger.debug(f"Raw Combined WS message received: {raw_msg}") # Keep commented unless deep debugging needed
 
     try:
         combined_data = json.loads(raw_msg)

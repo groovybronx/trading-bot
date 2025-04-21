@@ -166,11 +166,11 @@ class StateManager:
         # --- Step 1: Format data OUTSIDE the lock ---
         simplified_new_history = []
         if isinstance(new_raw_history, list):
-             logger.debug(f"replace_order_history: Formatting {len(new_raw_history)} raw orders...")
+             #logger.debug(f"replace_order_history: Formatting {len(new_raw_history)} raw orders...")
              for order in new_raw_history:
                  # Format each order using the helper
                  simplified_new_history.append(self._format_order_for_history(order))
-             logger.debug(f"replace_order_history: Formatting complete.")
+             #logger.debug(f"replace_order_history: Formatting complete.")
         else:
              logger.error("replace_order_history: Received non-list data, cannot replace history.")
              return

@@ -16,7 +16,7 @@ def broadcast_message(message_dict: dict):
         return
 
     try:
-        logger.debug(f"Attempting to JSON dump: {message_dict}")
+        #logger.debug(f"Attempting to JSON dump: {message_dict}")
         # default=str handles non-serializable types like Decimal or datetime if they appear
         message_json = json.dumps(message_dict, default=str)
         # Create a copy to iterate over, allowing modification of the original set
