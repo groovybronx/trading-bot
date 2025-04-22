@@ -1,20 +1,35 @@
 {
     "state": {
-        "in_position": true,
-        "entry_details": {
-            "order_id": 6243087,
-            "avg_price": "91500.46844400711020822752666",
-            "quantity": "0.47256000",
-            "timestamp": 1745352059660,
-            "side": "BUY",
-            "highest_price": "91500.46844400711020822752666",
-            "lowest_price": "91500.46844400711020822752666",
-            "sl_price": null,
-            "tp1_price": null,
-            "tp2_price": null
-        }
+        "in_position": false,
+        "entry_details": null
     },
     "history": [
+        {
+            "timestamp": 1745354436590,
+            "orderId": "6253938",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "origQty": "0.02621000",
+            "executedQty": "0.02621000",
+            "cummulativeQuoteQty": "2389.49650560",
+            "price": "0.00000000",
+            "status": "FILLED",
+            "performance_pct": null
+        },
+        {
+            "timestamp": 1745353997030,
+            "orderId": "6251853",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "origQty": "0.26183000",
+            "executedQty": "0.26183000",
+            "cummulativeQuoteQty": "23895.55744310",
+            "price": "0.00000000",
+            "status": "FILLED",
+            "performance_pct": null
+        },
         {
             "timestamp": 1745352059660,
             "orderId": "6243087",
@@ -39,7 +54,7 @@
             "cummulativeQuoteQty": "43251.02096890",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.0198%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745351977487,
@@ -65,7 +80,7 @@
             "cummulativeQuoteQty": "43219.82439210",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.1658%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745351914804,
@@ -91,7 +106,7 @@
             "cummulativeQuoteQty": "86472.46283050",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.2492%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745351327301,
@@ -117,7 +132,7 @@
             "cummulativeQuoteQty": "86502.37304680",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.2220%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745351305079,
@@ -143,7 +158,7 @@
             "cummulativeQuoteQty": "9.11154300",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.4208%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745346288735,
@@ -169,7 +184,7 @@
             "cummulativeQuoteQty": "73272.62529050",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "0.0987%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745345058440,
@@ -182,7 +197,7 @@
             "cummulativeQuoteQty": "8241.14802600",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "0.0741%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745345004745,
@@ -195,7 +210,7 @@
             "cummulativeQuoteQty": "10.06279780",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-0.0224%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745274473768,
@@ -208,7 +223,7 @@
             "cummulativeQuoteQty": "9.57242000",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-4.8945%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745270941013,
@@ -221,7 +236,7 @@
             "cummulativeQuoteQty": "9.59009260",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-4.7189%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745270445795,
@@ -234,7 +249,7 @@
             "cummulativeQuoteQty": "9.58947660",
             "price": "0.00000000",
             "status": "FILLED",
-            "performance_pct": "-4.7250%"
+            "performance_pct": null
         },
         {
             "timestamp": 1745269888038,
@@ -635,32 +650,6 @@
             "origQty": "0.00011000",
             "executedQty": "0.00011000",
             "cummulativeQuoteQty": "9.62003570",
-            "price": "0.00000000",
-            "status": "FILLED",
-            "performance_pct": null
-        },
-        {
-            "timestamp": 1745205902285,
-            "orderId": "5593066",
-            "symbol": "BTCUSDT",
-            "side": "BUY",
-            "type": "MARKET",
-            "origQty": "0.00011000",
-            "executedQty": "0.00011000",
-            "cummulativeQuoteQty": "9.61817010",
-            "price": "0.00000000",
-            "status": "FILLED",
-            "performance_pct": null
-        },
-        {
-            "timestamp": 1745205664764,
-            "orderId": "5592036",
-            "symbol": "BTCUSDT",
-            "side": "BUY",
-            "type": "MARKET",
-            "origQty": "0.00011000",
-            "executedQty": "0.00011000",
-            "cummulativeQuoteQty": "9.62500110",
             "price": "0.00000000",
             "status": "FILLED",
             "performance_pct": null

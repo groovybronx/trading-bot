@@ -23,7 +23,7 @@ params = {
     "STRATEGY_TYPE": "SCALPING2",
     "SYMBOL": "BTCUSDT",
     "TIMEFRAME": "1m",
-    "CAPITAL_ALLOCATION": 50.0, # 50% du capital total
+    "CAPITAL_ALLOCATION": 10.0, # 50% du capital total
     "RISK_PER_TRADE": 1.0, # 1% du capital alloué
     "STOP_LOSS_PERCENTAGE": 0.5,  # 0.5%
     "TAKE_PROFIT_1_PERCENTAGE": 1.0,  # 1%

@@ -115,6 +115,29 @@ Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagn�
 3.  **Ouvrir le Dashboard :**
     Ouvrez votre navigateur web et allez à l'adresse indiquée par Flask (généralement `http://127.0.0.1:5000`).
 
+## Nouveautés et Points Importants (2025)
+
+*   **Paramètres Généraux Centralisés :**
+    *   Les paramètres "Risque par ordre (%)" (`RISK_PER_TRADE`) et "Capital investi (%)" (`CAPITAL_ALLOCATION`) sont désormais réglables dans la section "Paramètres Généraux" de l'interface web. Ils s'appliquent à toutes les stratégies.
+    *   Ces paramètres sont pris en compte dans tous les calculs de taille de position, quel que soit le mode (SWING, SCALPING, SCALPING2).
+*   **Validation stricte des paramètres :**
+    *   Certains paramètres comme `STOP_LOSS_PERCENTAGE` sont obligatoires et doivent respecter les bornes (ex : entre 0.1% et 5%).
+    *   Si un paramètre requis est manquant ou invalide, la sauvegarde échoue et le bot ne démarre pas.
+*   **Test d'ordre automatisé :**
+    *   Un script de test (`backend/test_scalping2_order.py`) permet de simuler l'envoi d'un ordre en SCALPING2 en calculant automatiquement la quantité à investir selon le solde disponible et la configuration (`CAPITAL_ALLOCATION`).
+    *   Exemple d'utilisation :
+        ```bash
+        python backend/test_scalping2_order.py
+        ```
+    *   Le script :
+        - Active la stratégie SCALPING2 avec les paramètres requis (dont STOP_LOSS_PERCENTAGE).
+        - Récupère le solde disponible via l'API backend.
+        - Calcule le montant à investir selon le pourcentage défini.
+        - Envoie un ordre MARKET BUY avec ce montant.
+    *   **Attention :**
+        - Vérifiez que vous avez du solde sur le compte testnet.
+        - Fournissez toujours un STOP_LOSS_PERCENTAGE valide dans le script de test.
+
 ## Utilisation du Dashboard
 
 *   **Statut du Bot :** Affiche l'état actuel, la stratégie, le symbole, les balances, le prix et la position.
@@ -124,6 +147,7 @@ Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagn�
     *   `Démarrer le Bot` : Lance le processus principal du bot (`bot_core`).
     *   `Arrêter le Bot` : Arrête le processus principal et ferme les connexions.
 *   **Paramètres de Stratégie :**
+    *   Les paramètres généraux (Risque par ordre, Capital investi) sont accessibles en haut du formulaire et s'appliquent à toutes les stratégies.
     *   Sélectionnez le `Type de Stratégie` (SWING ou SCALPING) pour afficher/masquer les paramètres pertinents.
     *   Modifiez les valeurs souhaitées.
     *   Cliquez sur `Sauvegarder les Paramètres`. Un message indiquera le succès ou l'échec.
