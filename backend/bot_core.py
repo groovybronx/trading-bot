@@ -24,6 +24,7 @@ import websocket_handlers
 from websocket_utils import broadcast_state_update
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Désactive les logs info/debug par défaut
 
 KEEPALIVE_INTERVAL_SECONDS = 30 * 60
 
@@ -31,6 +32,7 @@ KEEPALIVE_INTERVAL_SECONDS = 30 * 60
 # _calculate_exit_quantity, _place_exit_order, _handle_exit_order_result sont supprimées.
 
 # --- Fonctions Ordres Stratégie (Appelées par Handlers ou API) ---
+
 
 def cancel_scalping_order(symbol: str, order_id: int):
     """Annule un ordre LIMIT ouvert."""
@@ -53,6 +55,7 @@ def cancel_scalping_order(symbol: str, order_id: int):
 
 
 # --- Thread Principal Bot ---
+
 
 def run_bot():
     """Thread principal (simplifié, la logique est dans les handlers WS)."""
@@ -84,6 +87,7 @@ def run_bot():
 
 
 # --- Thread Keepalive ---
+
 
 def run_keepalive():
     """Thread pour renouveler le listenKey."""
@@ -149,6 +153,7 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 50
 
 # --- Fonctions Contrôle (Orchestration Démarrage/Arrêt) ---
 
+
 def _initialize_client_and_config() -> bool:
     """Initialise client Binance et charge config."""
     logger.info("Start Core: Initializing Binance Client...")
@@ -191,7 +196,9 @@ def _load_and_prepare_state() -> bool:
     initial_base = binance_client_wrapper.get_account_balance(asset=base_asset)
 
     # Utiliser Decimal pour les balances récupérées
-    initial_quote_decimal = initial_quote if initial_quote is not None else Decimal("0.0")
+    initial_quote_decimal = (
+        initial_quote if initial_quote is not None else Decimal("0.0")
+    )
     initial_base_decimal = initial_base if initial_base is not None else Decimal("0.0")
 
     state_updates = {
@@ -250,7 +257,7 @@ def _prefetch_kline_history() -> bool:
         state_manager.clear_kline_history()
         return True
 
-    current_tf = config_manager.get_value("TIMEFRAME", "1m") # Utiliser TIMEFRAME
+    current_tf = config_manager.get_value("TIMEFRAME", "1m")  # Utiliser TIMEFRAME
     required_limit = state_manager.get_required_klines()
     symbol = state_manager.get_state("symbol")
 
@@ -269,14 +276,16 @@ def _prefetch_kline_history() -> bool:
         )
         return True
     elif initial_klines:
-         logger.warning(f"Start Core ({strategy_type}): Prefetched only {len(initial_klines)}/{required_limit} klines. Might be insufficient.")
-         state_manager.resize_kline_history(required_limit)
-         state_manager.replace_kline_history(initial_klines)
-         return True # Continuer mais avec un avertissement
+        logger.warning(
+            f"Start Core ({strategy_type}): Prefetched only {len(initial_klines)}/{required_limit} klines. Might be insufficient."
+        )
+        state_manager.resize_kline_history(required_limit)
+        state_manager.replace_kline_history(initial_klines)
+        return True  # Continuer mais avec un avertissement
     else:
         logger.error(f"Start Core ({strategy_type}): Failed to prefetch klines.")
         state_manager.clear_kline_history()
-        return False # Échec critique
+        return False  # Échec critique
 
 
 # --- Suppression de _prefetch_kline_history_scalping2 (fusionné dans _prefetch_kline_history) ---
@@ -335,6 +344,7 @@ def _stop_main_thread(timeout: int = 5) -> bool:
 
 
 # --- Gestion WebSocket ---
+
 
 def _handle_websocket_message(ws_client_instance, raw_msg: str):
     """Callback central pour messages WebSocket combinés."""
@@ -440,16 +450,16 @@ def _start_websockets() -> bool:
 
         # CORRECTION: Fournir l'URL de base, la bibliothèque ajoute /stream pour is_combined=True
         ws_stream_url = (
-            "wss://testnet.binance.vision" # URL de base Testnet
+            "wss://testnet.binance.vision"  # URL de base Testnet
             if use_testnet
-            else "wss://stream.binance.com:9443" # URL de base Production (garder le port)
-        )   
+            else "wss://stream.binance.com:9443"  # URL de base Production (garder le port)
+        )
         ws_client = SpotWebsocketStreamClient(
             stream_url=ws_stream_url,
             on_message=_handle_websocket_message,
             on_close=lambda *args: logger.info("WebSocket Client: Connection closed."),
             on_error=lambda _, e: logger.error(f"WebSocket Client: Error: {e}"),
-            is_combined=True, # Important pour l'URL /stream
+            is_combined=True,  # Important pour l'URL /stream
         )
         state_manager.update_state({"websocket_client": ws_client})
         logger.info(f"WebSocket Client created (URL: {ws_stream_url})")
@@ -555,8 +565,10 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
             # Tenter de se désabonner avant d'arrêter (best effort)
             listen_key = state_manager.get_state("listen_key")
             if listen_key:
-                 try: ws_client.unsubscribe(stream=[listen_key], id=99)
-                 except Exception as unsub_e: logger.warning(f"Error unsubscribing listen key: {unsub_e}")
+                try:
+                    ws_client.unsubscribe(stream=[listen_key], id=99)
+                except Exception as unsub_e:
+                    logger.warning(f"Error unsubscribing listen key: {unsub_e}")
             ws_client.stop()
             time.sleep(0.5)
             logger.info(f"{log_prefix} WebSocket Client stop initiated.")
@@ -572,6 +584,7 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
 
 
 # --- Fonctions Contrôle Publiques ---
+
 
 def start_bot_core() -> tuple[bool, str]:
     """Fonction principale pour démarrer le bot."""
@@ -591,7 +604,7 @@ def start_bot_core() -> tuple[bool, str]:
         return False, "Échec initialisation client/config."
     if not _load_and_prepare_state():
         return False, "Échec chargement état/données initiales."
-    if not _prefetch_kline_history(): # Gère SWING et SCALPING2
+    if not _prefetch_kline_history():  # Gère SWING et SCALPING2
         state_manager.update_state({"status": "ERROR"})
         broadcast_state_update()
         return False, "Échec préchargement Klines (requis pour SWING/SCALPING2)."

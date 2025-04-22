@@ -38,7 +38,7 @@ order_data = {
     "symbol": "BTCUSDT",
     "side": "SELL",
     "order_type": "MARKET",
-    "quantity": "0.00015" # CORRECT: Use quantity for amount in BTC (base asset)
+    "quantity": "0.9" # CORRECT: Use quantity for amount in BTC (base asset)
 }
 
 # # Example 3: Limit BUY - Buy 0.0002 BTC if price drops to 60000 USDT

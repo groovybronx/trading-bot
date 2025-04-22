@@ -1,6 +1,6 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/strategies/scalping_strategy.py
 import logging
-from decimal import Decimal, InvalidOperation, ROUND_DOWN # Importer ROUND_DOWN
+from decimal import Decimal, InvalidOperation, ROUND_DOWN  # Importer ROUND_DOWN
 from typing import Optional, Dict, Any, List, Union
 
 # Importer les utilitaires partagés mis à jour
@@ -13,12 +13,13 @@ from utils.order_utils import (
 
 logger = logging.getLogger(__name__)
 
+
 def check_entry_conditions(
     current_symbol: str,
     book_ticker: Dict[str, Any],
     depth: Dict[str, Any],
     current_config: Dict[str, Any],
-    available_balance: Decimal, # Utiliser Decimal ici
+    available_balance: Decimal,  # Utiliser Decimal ici
     symbol_info: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """
@@ -38,67 +39,99 @@ def check_entry_conditions(
         best_ask_qty = Decimal(book_ticker.get("A", "0"))
 
         if best_bid_price <= 0 or best_ask_price <= 0:
-            logger.warning(f"SCALPING Entry Check: Prix invalides (bid={best_bid_price}, ask={best_ask_price}).")
+            logger.warning(
+                f"SCALPING Entry Check: Prix invalides (bid={best_bid_price}, ask={best_ask_price})."
+            )
             return None
 
     except (InvalidOperation, TypeError) as e:
-        logger.error(f"SCALPING Entry Check: Erreur conversion données book ticker: {e}")
+        logger.error(
+            f"SCALPING Entry Check: Erreur conversion données book ticker: {e}"
+        )
         return None
 
     # --- Logique de Scalping (Exemple Basique) ---
     should_buy = False
     try:
-        relative_spread = (best_ask_price - best_bid_price) / best_ask_price if best_ask_price > 0 else Decimal("Infinity")
-        # Récupérer la valeur DEJA en fraction depuis config_manager
-        spread_threshold = current_config.get("SCALPING_SPREAD_THRESHOLD", Decimal("0.0001"))
-
+        relative_spread = (
+            (best_ask_price - best_bid_price) / best_ask_price
+            if best_ask_price > 0
+            else Decimal("Infinity")
+        )
+        spread_threshold = current_config.get(
+            "SCALPING_SPREAD_THRESHOLD", Decimal("0.0001")
+        )
         levels = current_config.get("SCALPING_DEPTH_LEVELS", 5)
-        # Utiliser Decimal pour les quantités de profondeur
-        valid_bids = [Decimal(level[1]) for level in depth["bids"][:levels] if len(level) > 1 and Decimal(level[1]) > 0]
-        valid_asks = [Decimal(level[1]) for level in depth["asks"][:levels] if len(level) > 1 and Decimal(level[1]) > 0]
-
+        valid_bids = [
+            Decimal(level[1])
+            for level in depth["bids"][:levels]
+            if len(level) > 1 and Decimal(level[1]) > 0
+        ]
+        valid_asks = [
+            Decimal(level[1])
+            for level in depth["asks"][:levels]
+            if len(level) > 1 and Decimal(level[1]) > 0
+        ]
         if not valid_bids or not valid_asks:
-            # logger.warning("SCALPING Entry Check: Données de profondeur invalides ou insuffisantes.") # Verbeux
             return None
-
         total_bid_qty = sum(valid_bids)
         total_ask_qty = sum(valid_asks)
-
-        imbalance_ratio = total_bid_qty / total_ask_qty if total_ask_qty > 0 else Decimal("Infinity")
-        # Récupérer la valeur float depuis config_manager
-        imbalance_threshold = Decimal(str(current_config.get("SCALPING_IMBALANCE_THRESHOLD", 1.5)))
-
-        # --- Condition d'achat (Exemple) ---
+        imbalance_ratio = (
+            total_bid_qty / total_ask_qty if total_ask_qty > 0 else Decimal("Infinity")
+        )
+        imbalance_threshold = Decimal(
+            str(current_config.get("SCALPING_IMBALANCE_THRESHOLD", 1.5))
+        )
+        # --- Vérification du capital minimum AVANT le log du signal ---
+        capital_allocation_fraction = current_config.get(
+            "CAPITAL_ALLOCATION", Decimal("0.5")
+        )
+        capital_to_use = available_balance * capital_allocation_fraction
+        capital_to_use *= Decimal("0.95")
+        min_notional = get_min_notional(symbol_info)
+        min_order_value = max(Decimal("5.1"), min_notional * Decimal("1.05"))
         if relative_spread < spread_threshold and imbalance_ratio > imbalance_threshold:
+            if capital_to_use < min_order_value:
+                logger.warning(
+                    f"SCALPING Entry: Capital insuffisant ({capital_to_use:.4f}) pour atteindre la valeur min ({min_order_value:.4f})."
+                )
+                return None
             logger.info(
                 f"SCALPING BUY Condition Met: Spread={relative_spread:.5f} (<{spread_threshold}), Imbalance={imbalance_ratio:.2f} (>{imbalance_threshold})"
             )
             should_buy = True
         # --- Fin Condition d'achat ---
-
     except (IndexError, TypeError, KeyError, ZeroDivisionError, InvalidOperation) as e:
-        logger.error(f"SCALPING Entry Check: Erreur calcul indicateurs: {e}", exc_info=True)
+        logger.error(
+            f"SCALPING Entry Check: Erreur calcul indicateurs: {e}", exc_info=True
+        )
         return None
 
     if should_buy:
         try:
             # --- Calcul Taille Position / Montant ---
             # available_balance est déjà un Decimal
-            capital_allocation_fraction = current_config.get("CAPITAL_ALLOCATION", Decimal("0.5")) # Déjà une fraction
+            capital_allocation_fraction = current_config.get(
+                "CAPITAL_ALLOCATION", Decimal("0.5")
+            )  # Déjà une fraction
             capital_to_use = available_balance * capital_allocation_fraction
-            capital_to_use *= Decimal("0.95") # Marge de sécurité
+            capital_to_use *= Decimal("0.95")  # Marge de sécurité
 
-            entry_price_decimal = best_ask_price # Utiliser Ask pour acheter
-            min_notional = get_min_notional(symbol_info) # Récupère en Decimal
+            entry_price_decimal = best_ask_price  # Utiliser Ask pour acheter
+            min_notional = get_min_notional(symbol_info)  # Récupère en Decimal
 
             # Assurer un notionnel minimum (ex: 5.1 USDT ou min_notional + 5% buffer sur Testnet)
             # Utiliser Decimal pour la comparaison
-            min_order_value = max(Decimal("5.1"), min_notional * Decimal("1.05")) # Ajusté pour testnet
+            min_order_value = max(
+                Decimal("5.1"), min_notional * Decimal("1.05")
+            )  # Ajusté pour testnet
 
             # Vérifier si le capital alloué est suffisant pour la valeur minimale
             if capital_to_use < min_order_value:
-                 logger.warning(f"SCALPING Entry: Capital insuffisant ({capital_to_use:.4f}) pour atteindre la valeur min ({min_order_value:.4f}).")
-                 return None
+                logger.warning(
+                    f"SCALPING Entry: Capital insuffisant ({capital_to_use:.4f}) pour atteindre la valeur min ({min_order_value:.4f})."
+                )
+                return None
 
             # --- Préparation des paramètres d'ordre ---
             order_type = current_config.get("SCALPING_ORDER_TYPE", "MARKET").upper()
@@ -109,8 +142,10 @@ def check_entry_conditions(
             }
 
             # Récupérer la précision de l'asset de cotation (ex: USDT)
-            quote_precision = symbol_info.get("quotePrecision", 8) # Défaut 8 si non trouvé
-            quantizer = Decimal('1e-' + str(quote_precision))
+            quote_precision = symbol_info.get(
+                "quotePrecision", 8
+            )  # Défaut 8 si non trouvé
+            quantizer = Decimal("1e-" + str(quote_precision))
 
             if order_type == "MARKET":
                 # Pour MARKET BUY: Utiliser quoteOrderQty avec le capital à utiliser
@@ -118,57 +153,90 @@ def check_entry_conditions(
                 quote_amount_to_spend_raw = min(capital_to_use, available_balance)
 
                 # CORRECTION: Arrondir quote_amount_to_spend à la bonne précision
-                quote_amount_to_spend = quote_amount_to_spend_raw.quantize(quantizer, rounding=ROUND_DOWN)
+                quote_amount_to_spend = quote_amount_to_spend_raw.quantize(
+                    quantizer, rounding=ROUND_DOWN
+                )
 
                 # Vérification finale: le montant arrondi atteint-il le min_notional?
                 if quote_amount_to_spend < min_notional:
-                     logger.error(f"SCALPING Entry (MARKET): Montant final arrondi ({quote_amount_to_spend}) < MIN_NOTIONAL ({min_notional}). Raw: {quote_amount_to_spend_raw}")
-                     return None
+                    logger.error(
+                        f"SCALPING Entry (MARKET): Montant final arrondi ({quote_amount_to_spend}) < MIN_NOTIONAL ({min_notional}). Raw: {quote_amount_to_spend_raw}"
+                    )
+                    return None
 
                 # Pas besoin de formater ici, le wrapper s'en charge (il convertira en str)
-                order_params["quoteOrderQty"] = quote_amount_to_spend # Utiliser la valeur arrondie
+                order_params["quoteOrderQty"] = (
+                    quote_amount_to_spend  # Utiliser la valeur arrondie
+                )
                 # Log avec la précision correcte
                 log_format_str = "{:." + str(quote_precision) + "f}"
-                logger.info(f"SCALPING Entry: Préparation MARKET BUY avec quoteOrderQty={log_format_str.format(order_params['quoteOrderQty'])}")
-
+                logger.info(
+                    f"SCALPING Entry: Préparation MARKET BUY avec quoteOrderQty={log_format_str.format(order_params['quoteOrderQty'])}"
+                )
 
             elif order_type == "LIMIT":
                 # Pour LIMIT BUY: Calculer la quantité BASE
                 base_quantity_unformatted = capital_to_use / entry_price_decimal
 
                 # Formater la quantité BASE selon LOT_SIZE
-                formatted_base_quantity = format_quantity(base_quantity_unformatted, symbol_info)
+                formatted_base_quantity = format_quantity(
+                    base_quantity_unformatted, symbol_info
+                )
 
                 if formatted_base_quantity is None or formatted_base_quantity <= 0:
-                    logger.warning(f"SCALPING Entry (LIMIT): Quantité base ({base_quantity_unformatted:.8f}) invalide après formatage.")
+                    logger.warning(
+                        f"SCALPING Entry (LIMIT): Quantité base ({base_quantity_unformatted:.8f}) invalide après formatage."
+                    )
                     return None
 
                 # Vérifier le notionnel final pour l'ordre LIMIT avec la quantité formatée
-                limit_price = format_price(entry_price_decimal, symbol_info) # Formater aussi le prix
+                limit_price = format_price(
+                    entry_price_decimal, symbol_info
+                )  # Formater aussi le prix
                 if limit_price is None:
-                     logger.error(f"SCALPING Entry (LIMIT): Prix limite invalide après formatage.")
-                     return None
+                    logger.error(
+                        f"SCALPING Entry (LIMIT): Prix limite invalide après formatage."
+                    )
+                    return None
 
-                if not check_min_notional(formatted_base_quantity, limit_price, min_notional):
-                    logger.warning(f"SCALPING Entry (LIMIT): Notionnel final ({formatted_base_quantity * limit_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}) après formatage Qty/Prix. Ordre annulé.")
-                    return None # Annuler si on veut être strict
+                if not check_min_notional(
+                    formatted_base_quantity, limit_price, min_notional
+                ):
+                    logger.warning(
+                        f"SCALPING Entry (LIMIT): Notionnel final ({formatted_base_quantity * limit_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}) après formatage Qty/Prix. Ordre annulé."
+                    )
+                    return None  # Annuler si on veut être strict
 
                 order_params["quantity"] = formatted_base_quantity
                 order_params["price"] = limit_price
-                order_params["time_in_force"] = current_config.get("SCALPING_LIMIT_TIF", "GTC")
-                logger.info(f"SCALPING Entry: Préparation LIMIT BUY Qty={order_params['quantity']} @ Price={order_params['price']} ({order_params['time_in_force']})")
+                order_params["time_in_force"] = current_config.get(
+                    "SCALPING_LIMIT_TIF", "GTC"
+                )
+                logger.info(
+                    f"SCALPING Entry: Préparation LIMIT BUY Qty={order_params['quantity']} @ Price={order_params['price']} ({order_params['time_in_force']})"
+                )
 
             else:
-                logger.error(f"SCALPING Entry: Type d'ordre non supporté '{order_type}'.")
+                logger.error(
+                    f"SCALPING Entry: Type d'ordre non supporté '{order_type}'."
+                )
                 return None
 
             return order_params
 
-        except (InvalidOperation, TypeError, ValueError, ZeroDivisionError, KeyError) as e:
-            logger.error(f"SCALPING Entry: Erreur calcul/préparation ordre: {e}", exc_info=True)
+        except (
+            InvalidOperation,
+            TypeError,
+            ValueError,
+            ZeroDivisionError,
+            KeyError,
+        ) as e:
+            logger.error(
+                f"SCALPING Entry: Erreur calcul/préparation ordre: {e}", exc_info=True
+            )
             return None
 
-    return None # Si should_buy est False
+    return None  # Si should_buy est False
 
 
 # Le reste du fichier (check_strategy_exit_conditions, check_sl_tp) reste inchangé
@@ -188,22 +256,41 @@ def check_strategy_exit_conditions(
     try:
         # Pas besoin de prix ici, juste la profondeur
         levels = current_config.get("SCALPING_DEPTH_LEVELS", 5)
-        valid_bids = [Decimal(level[1]) for level in depth["bids"][:levels] if len(level) > 1 and Decimal(level[1]) > 0]
-        valid_asks = [Decimal(level[1]) for level in depth["asks"][:levels] if len(level) > 1 and Decimal(level[1]) > 0]
+        valid_bids = [
+            Decimal(level[1])
+            for level in depth["bids"][:levels]
+            if len(level) > 1 and Decimal(level[1]) > 0
+        ]
+        valid_asks = [
+            Decimal(level[1])
+            for level in depth["asks"][:levels]
+            if len(level) > 1 and Decimal(level[1]) > 0
+        ]
 
-        if not valid_bids or not valid_asks: return False
+        if not valid_bids or not valid_asks:
+            return False
 
         total_bid_qty = sum(valid_bids)
         total_ask_qty = sum(valid_asks)
-        imbalance_ratio = total_bid_qty / total_ask_qty if total_ask_qty > 0 else Decimal("Infinity")
+        imbalance_ratio = (
+            total_bid_qty / total_ask_qty if total_ask_qty > 0 else Decimal("Infinity")
+        )
 
-        imbalance_entry_threshold = Decimal(str(current_config.get("SCALPING_IMBALANCE_THRESHOLD", 1.5)))
+        imbalance_entry_threshold = Decimal(
+            str(current_config.get("SCALPING_IMBALANCE_THRESHOLD", 1.5))
+        )
         # Seuil de sortie: inverse du seuil d'entrée (ou proche de 1)
-        exit_imbalance_threshold = Decimal("1.0") / imbalance_entry_threshold if imbalance_entry_threshold > Decimal("1.0") else Decimal("0.9")
+        exit_imbalance_threshold = (
+            Decimal("1.0") / imbalance_entry_threshold
+            if imbalance_entry_threshold > Decimal("1.0")
+            else Decimal("0.9")
+        )
 
         # Condition de sortie si LONG (le déséquilibre s'inverse)
         if imbalance_ratio < exit_imbalance_threshold:
-            logger.info(f"SCALPING EXIT Condition Met: Imbalance={imbalance_ratio:.2f} (<{exit_imbalance_threshold:.2f})")
+            logger.info(
+                f"SCALPING EXIT Condition Met: Imbalance={imbalance_ratio:.2f} (<{exit_imbalance_threshold:.2f})"
+            )
             return True
 
     except (IndexError, TypeError, KeyError, ZeroDivisionError, InvalidOperation) as e:
@@ -224,31 +311,42 @@ def check_sl_tp(
     Vérifie si le Stop Loss ou le Take Profit est atteint pour SCALPING.
     Retourne 'SL' ou 'TP' si atteint, sinon None. Utilise Decimal.
     """
-    if not book_ticker or not entry_details: return None
+    if not book_ticker or not entry_details:
+        return None
 
     try:
         entry_price = Decimal(str(entry_details.get("avg_price", "0")))
-        if entry_price <= 0: return None
+        if entry_price <= 0:
+            return None
 
         # Pour une position LONG: SL/TP déclenchés par le prix BID (prix de vente)
-        current_price = Decimal(book_ticker.get("b", "0")) # Best Bid
-        if current_price <= 0: return None
+        current_price = Decimal(book_ticker.get("b", "0"))  # Best Bid
+        if current_price <= 0:
+            return None
 
         # --- Stop Loss ---
-        sl_pct = current_config.get("STOP_LOSS_PERCENTAGE", Decimal("0.005")) # Déjà Decimal
+        sl_pct = current_config.get(
+            "STOP_LOSS_PERCENTAGE", Decimal("0.005")
+        )  # Déjà Decimal
         stop_loss_price = entry_price * (Decimal(1) - sl_pct)
         if current_price <= stop_loss_price:
-            logger.info(f"SCALPING SL Hit: Bid {current_price:.4f} <= SL {stop_loss_price:.4f} (Entry: {entry_price:.4f})")
+            logger.info(
+                f"SCALPING SL Hit: Bid {current_price:.4f} <= SL {stop_loss_price:.4f} (Entry: {entry_price:.4f})"
+            )
             return "SL"
 
         # --- Take Profit ---
         # Utiliser TP1 comme seuil principal si défini, sinon TP générique (qui est TP1 par défaut)
-        tp_pct = current_config.get("TAKE_PROFIT_1_PERCENTAGE", Decimal("0.01")) # Déjà Decimal
+        tp_pct = current_config.get(
+            "TAKE_PROFIT_1_PERCENTAGE", Decimal("0.01")
+        )  # Déjà Decimal
 
         take_profit_price = entry_price * (Decimal(1) + tp_pct)
 
         if current_price >= take_profit_price:
-            logger.info(f"SCALPING TP Hit: Bid {current_price:.4f} >= TP {take_profit_price:.4f} (Entry: {entry_price:.4f})")
+            logger.info(
+                f"SCALPING TP Hit: Bid {current_price:.4f} >= TP {take_profit_price:.4f} (Entry: {entry_price:.4f})"
+            )
             # Note: Gestion TP1/TP2 partielle nécessiterait plus de logique. Ici, sortie totale au TP1.
             return "TP"
 
