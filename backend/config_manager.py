@@ -205,7 +205,11 @@ class ConfigManager:
                 validated_config_fractions[key] = params_in_percent.get(key)
 
             # --- Timeframe ---
-            new_tf = str(params_in_percent.get("TIMEFRAME_STR", "1m"))
+            new_tf = str(
+                params_in_percent.get(
+                    "TIMEFRAME_STR", getattr(config, "TIMEFRAME", "1m")
+                )
+            )
             if new_tf not in VALID_TIMEFRAMES:
                 raise ValueError(f"TIMEFRAME_STR invalide: {new_tf}")
             validated_config_fractions["TIMEFRAME_STR"] = new_tf
@@ -213,9 +217,9 @@ class ConfigManager:
                 restart_recommended = True
 
             # --- Risk Per Trade (%) -> fraction ---
-            risk_pct_in = params_in_percent.get("RISK_PER_TRADE")
-            if risk_pct_in is None:
-                raise ValueError("RISK_PER_TRADE (%) manquant.")
+            risk_pct_in = params_in_percent.get(
+                "RISK_PER_TRADE", getattr(config, "RISK_PER_TRADE", 1)
+            )
             try:
                 risk_pct = Decimal(str(risk_pct_in))
                 if not (Decimal("0") < risk_pct <= Decimal("100")):
@@ -227,9 +231,9 @@ class ConfigManager:
                 raise ValueError("RISK_PER_TRADE doit être un nombre.")
 
             # --- Capital Allocation (%) -> fraction ---
-            alloc_pct_in = params_in_percent.get("CAPITAL_ALLOCATION")
-            if alloc_pct_in is None:
-                raise ValueError("CAPITAL_ALLOCATION (%) manquant.")
+            alloc_pct_in = params_in_percent.get(
+                "CAPITAL_ALLOCATION", getattr(config, "CAPITAL_ALLOCATION", 50)
+            )
             try:
                 alloc_pct = Decimal(str(alloc_pct_in))
                 if not (Decimal("0") < alloc_pct <= Decimal("100")):
@@ -241,11 +245,12 @@ class ConfigManager:
                 raise ValueError("CAPITAL_ALLOCATION doit être un nombre.")
 
             # --- Stop Loss (%) -> fraction or None ---
-            sl_pct_in = params_in_percent.get("STOP_LOSS_PERCENTAGE")
+            sl_pct_in = params_in_percent.get(
+                "STOP_LOSS_PERCENTAGE", getattr(config, "STOP_LOSS_PERCENTAGE", 0.01)
+            )
             if sl_pct_in is not None and str(sl_pct_in).strip() != "":
                 try:
                     sl_pct = Decimal(str(sl_pct_in))
-                    # Les valeurs sont déjà en pourcentage décimal (0.005 = 0.5%)
                     if not (Decimal("0.001") <= sl_pct <= Decimal("0.05")):
                         raise ValueError(
                             "STOP_LOSS_PERCENTAGE doit être entre 0.1% et 5%"
@@ -254,37 +259,18 @@ class ConfigManager:
                 except InvalidOperation:
                     raise ValueError("STOP_LOSS_PERCENTAGE doit être un nombre.")
             else:
-                validated_config_fractions["STOP_LOSS_PERCENTAGE"] = (
-                    0.005  # Valeur par défaut 0.5%
+                validated_config_fractions["STOP_LOSS_PERCENTAGE"] = float(
+                    getattr(config, "STOP_LOSS_PERCENTAGE", 0.01)
                 )
-
-            # --- Take Profit (%) -> fraction or None ---
-            tp_pct_in = params_in_percent.get("TAKE_PROFIT_PERCENTAGE")
-            if tp_pct_in is not None and str(tp_pct_in).strip() != "":
-                try:
-                    tp_pct = Decimal(str(tp_pct_in))
-                    # Les valeurs sont déjà en pourcentage décimal
-                    if not (Decimal("0.001") <= tp_pct <= Decimal("0.05")):
-                        raise ValueError(
-                            "TAKE_PROFIT_PERCENTAGE doit être entre 0.1% et 5%"
-                        )
-                    validated_config_fractions["TAKE_PROFIT_PERCENTAGE"] = float(tp_pct)
-                except InvalidOperation:
-                    raise ValueError("TAKE_PROFIT_PERCENTAGE doit être un nombre.")
-            else:
-                validated_config_fractions["TAKE_PROFIT_PERCENTAGE"] = (
-                    0.002  # Valeur par défaut 0.1%
-                )
-
-            # --- Gestion des Sorties ---
-            # Stop Loss déjà validé ci-dessus
 
             # --- Take Profit 1 (%) -> fraction or None ---
-            tp1_pct_in = params_in_percent.get("TAKE_PROFIT_1_PERCENTAGE")
+            tp1_pct_in = params_in_percent.get(
+                "TAKE_PROFIT_1_PERCENTAGE",
+                getattr(config, "TAKE_PROFIT_1_PERCENTAGE", 0.01),
+            )
             if tp1_pct_in is not None and str(tp1_pct_in).strip() != "":
                 try:
                     tp1_pct = Decimal(str(tp1_pct_in))
-                    # Les valeurs sont déjà en pourcentage décimal
                     if not (Decimal("0.001") <= tp1_pct <= Decimal("0.05")):
                         raise ValueError(
                             "TAKE_PROFIT_1_PERCENTAGE doit être entre 0.1% et 5%"
@@ -295,16 +281,18 @@ class ConfigManager:
                 except InvalidOperation:
                     raise ValueError("TAKE_PROFIT_1_PERCENTAGE doit être un nombre.")
             else:
-                validated_config_fractions["TAKE_PROFIT_1_PERCENTAGE"] = (
-                    0.0075  # 0.75% par défaut
+                validated_config_fractions["TAKE_PROFIT_1_PERCENTAGE"] = float(
+                    getattr(config, "TAKE_PROFIT_1_PERCENTAGE", 0.01)
                 )
 
             # --- Take Profit 2 (%) -> fraction or None ---
-            tp2_pct_in = params_in_percent.get("TAKE_PROFIT_2_PERCENTAGE")
+            tp2_pct_in = params_in_percent.get(
+                "TAKE_PROFIT_2_PERCENTAGE",
+                getattr(config, "TAKE_PROFIT_2_PERCENTAGE", 0.01),
+            )
             if tp2_pct_in is not None and str(tp2_pct_in).strip() != "":
                 try:
                     tp2_pct = Decimal(str(tp2_pct_in))
-                    # Les valeurs sont déjà en pourcentage décimal
                     if not (Decimal("0.001") <= tp2_pct <= Decimal("0.05")):
                         raise ValueError(
                             "TAKE_PROFIT_2_PERCENTAGE doit être entre 0.1% et 5%"
@@ -315,12 +303,15 @@ class ConfigManager:
                 except InvalidOperation:
                     raise ValueError("TAKE_PROFIT_2_PERCENTAGE doit être un nombre.")
             else:
-                validated_config_fractions["TAKE_PROFIT_2_PERCENTAGE"] = (
-                    0.01  # 1% par défaut
+                validated_config_fractions["TAKE_PROFIT_2_PERCENTAGE"] = float(
+                    getattr(config, "TAKE_PROFIT_2_PERCENTAGE", 0.01)
                 )
 
             # --- Trailing Stop (%) -> fraction ---
-            trailing_pct_in = params_in_percent.get("TRAILING_STOP_PERCENTAGE")
+            trailing_pct_in = params_in_percent.get(
+                "TRAILING_STOP_PERCENTAGE",
+                getattr(config, "TRAILING_STOP_PERCENTAGE", 0.003),
+            )
             if trailing_pct_in is not None and str(trailing_pct_in).strip() != "":
                 try:
                     trailing_pct = Decimal(str(trailing_pct_in))
@@ -332,16 +323,18 @@ class ConfigManager:
                         trailing_pct
                     )
                 except InvalidOperation:
-                    raise ValueError("TRAILING_STOP_PERCENTAGE doit être un nombre.")
+                    raise ValueError("TRAILING_STOP pourcentage doit être un nombre.")
             else:
-                validated_config_fractions["TRAILING_STOP_PERCENTAGE"] = (
-                    0.003  # 0.3% par défaut
+                validated_config_fractions["TRAILING_STOP_PERCENTAGE"] = float(
+                    getattr(config, "TRAILING_STOP_PERCENTAGE", 0.003)
                 )
 
             # --- Time Stop ---
             try:
                 validated_config_fractions["TIME_STOP_MINUTES"] = int(
-                    params_in_percent.get("TIME_STOP_MINUTES", 15)
+                    params_in_percent.get(
+                        "TIME_STOP_MINUTES", getattr(config, "TIME_STOP_MINUTES", 15)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("TIME_STOP_MINUTES doit être un entier.")
@@ -350,7 +343,9 @@ class ConfigManager:
 
             # --- Strategy Type ---
             new_strategy_type = str(
-                params_in_percent.get("STRATEGY_TYPE", "SWING")
+                params_in_percent.get(
+                    "STRATEGY_TYPE", getattr(config, "STRATEGY_TYPE", "SWING")
+                )
             ).upper()
             if new_strategy_type not in ["SCALPING", "SCALPING2", "SWING"]:
                 raise ValueError("STRATEGY_TYPE: 'SCALPING', 'SCALPING2' ou 'SWING'.")
@@ -360,7 +355,10 @@ class ConfigManager:
 
             # --- Scalping Params (Validation seulement, pas de conversion %) ---
             validated_config_fractions["SCALPING_ORDER_TYPE"] = str(
-                params_in_percent.get("SCALPING_ORDER_TYPE", "MARKET")
+                params_in_percent.get(
+                    "SCALPING_ORDER_TYPE",
+                    getattr(config, "SCALPING_ORDER_TYPE", "MARKET"),
+                )
             ).upper()
             if validated_config_fractions["SCALPING_ORDER_TYPE"] not in [
                 "MARKET",
@@ -368,7 +366,9 @@ class ConfigManager:
             ]:
                 raise ValueError("SCALPING_ORDER_TYPE: 'MARKET' ou 'LIMIT'.")
             validated_config_fractions["SCALPING_LIMIT_TIF"] = str(
-                params_in_percent.get("SCALPING_LIMIT_TIF", "GTC")
+                params_in_percent.get(
+                    "SCALPING_LIMIT_TIF", getattr(config, "SCALPING_LIMIT_TIF", "GTC")
+                )
             ).upper()
             if validated_config_fractions[
                 "SCALPING_ORDER_TYPE"
@@ -382,7 +382,10 @@ class ConfigManager:
                 )
             try:
                 validated_config_fractions["SCALPING_LIMIT_ORDER_TIMEOUT_MS"] = int(
-                    params_in_percent.get("SCALPING_LIMIT_ORDER_TIMEOUT_MS", 5000)
+                    params_in_percent.get(
+                        "SCALPING_LIMIT_ORDER_TIMEOUT_MS",
+                        getattr(config, "SCALPING_LIMIT_ORDER_TIMEOUT_MS", 5000),
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("SCALPING_LIMIT_ORDER_TIMEOUT_MS doit être un entier.")
@@ -390,7 +393,10 @@ class ConfigManager:
                 raise ValueError("SCALPING_LIMIT_ORDER_TIMEOUT_MS > 0.")
             try:
                 validated_config_fractions["SCALPING_DEPTH_LEVELS"] = int(
-                    params_in_percent.get("SCALPING_DEPTH_LEVELS", 5)
+                    params_in_percent.get(
+                        "SCALPING_DEPTH_LEVELS",
+                        getattr(config, "SCALPING_DEPTH_LEVELS", 5),
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("SCALPING_DEPTH_LEVELS doit être un entier.")
@@ -403,7 +409,10 @@ class ConfigManager:
             ):
                 restart_recommended = True
             validated_config_fractions["SCALPING_DEPTH_SPEED"] = str(
-                params_in_percent.get("SCALPING_DEPTH_SPEED", "100ms")
+                params_in_percent.get(
+                    "SCALPING_DEPTH_SPEED",
+                    getattr(config, "SCALPING_DEPTH_SPEED", "100ms"),
+                )
             ).lower()
             if validated_config_fractions["SCALPING_DEPTH_SPEED"] not in [
                 "100ms",
@@ -417,7 +426,10 @@ class ConfigManager:
             ):
                 restart_recommended = True
             # --- Scalping Thresholds ---
-            spread_in = params_in_percent.get("SCALPING_SPREAD_THRESHOLD", 0.0001)
+            spread_in = params_in_percent.get(
+                "SCALPING_SPREAD_THRESHOLD",
+                getattr(config, "SCALPING_SPREAD_THRESHOLD", 0.0001),
+            )
             try:
                 validated_config_fractions["SCALPING_SPREAD_THRESHOLD"] = float(
                     Decimal(str(spread_in))
@@ -426,7 +438,10 @@ class ConfigManager:
                 raise ValueError("SCALPING_SPREAD_THRESHOLD doit être un nombre >= 0.")
             if validated_config_fractions["SCALPING_SPREAD_THRESHOLD"] < 0:
                 raise ValueError("SCALPING_SPREAD_THRESHOLD >= 0.")
-            imbalance_in = params_in_percent.get("SCALPING_IMBALANCE_THRESHOLD", 1.5)
+            imbalance_in = params_in_percent.get(
+                "SCALPING_IMBALANCE_THRESHOLD",
+                getattr(config, "SCALPING_IMBALANCE_THRESHOLD", 1.5),
+            )
             try:
                 validated_config_fractions["SCALPING_IMBALANCE_THRESHOLD"] = float(
                     Decimal(str(imbalance_in))
@@ -437,7 +452,10 @@ class ConfigManager:
                 )
             if validated_config_fractions["SCALPING_IMBALANCE_THRESHOLD"] <= 0:
                 raise ValueError("SCALPING_IMBALANCE_THRESHOLD > 0.")
-            volume_in = params_in_percent.get("SCALPING_MIN_TRADE_VOLUME", 0.1)
+            volume_in = params_in_percent.get(
+                "SCALPING_MIN_TRADE_VOLUME",
+                getattr(config, "SCALPING_MIN_TRADE_VOLUME", 0.1),
+            )
             try:
                 validated_config_fractions["SCALPING_MIN_TRADE_VOLUME"] = float(
                     Decimal(str(volume_in))
@@ -450,7 +468,9 @@ class ConfigManager:
             # --- Swing Params (Validation seulement) ---
             try:
                 validated_config_fractions["EMA_SHORT_PERIOD"] = int(
-                    params_in_percent.get("EMA_SHORT_PERIOD", 9)
+                    params_in_percent.get(
+                        "EMA_SHORT_PERIOD", getattr(config, "EMA_SHORT_PERIOD", 9)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("EMA_SHORT_PERIOD doit être un entier.")
@@ -458,7 +478,9 @@ class ConfigManager:
                 raise ValueError("EMA_SHORT_PERIOD > 0")
             try:
                 validated_config_fractions["EMA_LONG_PERIOD"] = int(
-                    params_in_percent.get("EMA_LONG_PERIOD", 21)
+                    params_in_percent.get(
+                        "EMA_LONG_PERIOD", getattr(config, "EMA_LONG_PERIOD", 21)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("EMA_LONG_PERIOD doit être un entier.")
@@ -469,7 +491,9 @@ class ConfigManager:
                 raise ValueError("EMA_LONG_PERIOD > EMA_SHORT_PERIOD")
             try:
                 validated_config_fractions["EMA_FILTER_PERIOD"] = int(
-                    params_in_percent.get("EMA_FILTER_PERIOD", 50)
+                    params_in_percent.get(
+                        "EMA_FILTER_PERIOD", getattr(config, "EMA_FILTER_PERIOD", 50)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("EMA_FILTER_PERIOD doit être un entier.")
@@ -477,7 +501,9 @@ class ConfigManager:
                 raise ValueError("EMA_FILTER_PERIOD > 0")
             try:
                 validated_config_fractions["RSI_PERIOD"] = int(
-                    params_in_percent.get("RSI_PERIOD", 14)
+                    params_in_percent.get(
+                        "RSI_PERIOD", getattr(config, "RSI_PERIOD", 14)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("RSI_PERIOD doit être un entier.")
@@ -485,7 +511,9 @@ class ConfigManager:
                 raise ValueError("RSI_PERIOD > 1")
             try:
                 validated_config_fractions["RSI_OVERBOUGHT"] = int(
-                    params_in_percent.get("RSI_OVERBOUGHT", 75)
+                    params_in_percent.get(
+                        "RSI_OVERBOUGHT", getattr(config, "RSI_OVERBOUGHT", 75)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("RSI_OVERBOUGHT doit être un entier.")
@@ -493,7 +521,9 @@ class ConfigManager:
                 raise ValueError("RSI_OB > 50 et <= 100")
             try:
                 validated_config_fractions["RSI_OVERSOLD"] = int(
-                    params_in_percent.get("RSI_OVERSOLD", 25)
+                    params_in_percent.get(
+                        "RSI_OVERSOLD", getattr(config, "RSI_OVERSOLD", 25)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("RSI_OVERSOLD doit être un entier.")
@@ -506,17 +536,24 @@ class ConfigManager:
                 raise ValueError("RSI_OS < RSI_OB")
             try:
                 validated_config_fractions["VOLUME_AVG_PERIOD"] = int(
-                    params_in_percent.get("VOLUME_AVG_PERIOD", 20)
+                    params_in_percent.get(
+                        "VOLUME_AVG_PERIOD", getattr(config, "VOLUME_AVG_PERIOD", 20)
+                    )
                 )
             except (ValueError, TypeError):
                 raise ValueError("VOLUME_AVG_PERIOD doit être un entier.")
             if validated_config_fractions["VOLUME_AVG_PERIOD"] <= 0:
                 raise ValueError("VOL_AVG > 0")
             validated_config_fractions["USE_EMA_FILTER"] = bool(
-                params_in_percent.get("USE_EMA_FILTER", True)
+                params_in_percent.get(
+                    "USE_EMA_FILTER", getattr(config, "USE_EMA_FILTER", True)
+                )
             )
             validated_config_fractions["USE_VOLUME_CONFIRMATION"] = bool(
-                params_in_percent.get("USE_VOLUME_CONFIRMATION", False)
+                params_in_percent.get(
+                    "USE_VOLUME_CONFIRMATION",
+                    getattr(config, "USE_VOLUME_CONFIRMATION", False),
+                )
             )
 
             # Retourner la configuration COMPLÈTE validée et convertie en fractions

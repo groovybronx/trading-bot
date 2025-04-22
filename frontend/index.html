@@ -12,6 +12,7 @@
     <header>
         <h1>Trading Bot Dashboard</h1>
     </header>
+    <div id="signals-output"></div>
 
     <main>
         <section id="bot-status">
@@ -28,7 +29,11 @@
                     class="status-value">N/A</span></p>
             <!-- *** FIN CORRECTION *** -->
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
+            <div id="signals-output"></div>
+
         </section>
+
+
 
         <section id="order-history">
             <h2>Historique des Ordres (Session)</h2>
@@ -227,6 +232,8 @@
                     </div>
                 </div>
             </div> <!-- Fin scalping-params -->
+
+
 
             <button id="save-params-btn">Sauvegarder les Paramètres</button>
             <p id="param-save-status"></p>

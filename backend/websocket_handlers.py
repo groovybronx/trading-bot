@@ -15,6 +15,7 @@ import binance_client_wrapper  # Pour get_symbol_info si non mis en cache
 from websocket_utils import (
     broadcast_state_update,
     broadcast_ticker_update,
+    broadcast_signal_event,
 )  # Assurez-vous que broadcast_ticker_update existe bien ici
 from utils.order_utils import format_quantity, get_min_notional
 
@@ -486,6 +487,22 @@ def handle_scalping2_signals(last_two_rows, current_state, current_config):
         long_signal, long_reason = check_long_conditions(current_row, prev_row)
         short_signal, short_reason = check_short_conditions(current_row, prev_row)
 
+        # Visualisation des signaux
+        broadcast_signal_event(
+            signal_type="entry",
+            direction="LONG",
+            valid=bool(long_signal),
+            reason=long_reason or "Condition non remplie",
+            extra={"price": float(current_row["close"]), "symbol": configured_symbol},
+        )
+        broadcast_signal_event(
+            signal_type="entry",
+            direction="SHORT",
+            valid=bool(short_signal),
+            reason=short_reason or "Condition non remplie",
+            extra={"price": float(current_row["close"]), "symbol": configured_symbol},
+        )
+
         if long_signal or short_signal:
             symbol_info = state_manager.get_symbol_info()
             if not symbol_info:
@@ -517,10 +534,9 @@ def handle_scalping2_signals(last_two_rows, current_state, current_config):
             entry_order_params = {
                 "symbol": configured_symbol,
                 "side": side,
-                "type": "MARKET",
+                "order_type": "MARKET",
                 "quantity": format_quantity(position_size, symbol_info),
-                "sl_price": sl_price,
-                "tp_price": tp1_price,
+                # sl_price et tp_price sont utilisés pour la logique interne mais ne doivent pas être transmis à place_order
             }
 
             threading.Thread(
@@ -542,6 +558,15 @@ def handle_scalping2_signals(last_two_rows, current_state, current_config):
             position_data=position_data,
             config=current_config,
             position_duration=position_duration,
+        )
+
+        # Visualisation du signal de sortie
+        broadcast_signal_event(
+            signal_type="exit",
+            direction=position_data.get("side", ""),
+            valid=bool(should_exit),
+            reason=exit_reason,
+            extra={"price": current_price, "symbol": configured_symbol},
         )
 
         if should_exit:

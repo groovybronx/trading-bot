@@ -52,6 +52,7 @@ def setup_logging(log_queue, ws_log_handler): # Accepter le handler en argument
     # --- Configuration du logging vers la queue (pour WebSocket) ---
     queue_handler = QueueHandler(log_queue)
     # queue_handler.setLevel(logging.DEBUG) # Niveau pour les websockets
+    logging.getLogger("binance.api").setLevel(logging.INFO) # Réduire le bruit des logs de l'API Binance
 
     
     

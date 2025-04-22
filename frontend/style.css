@@ -241,3 +241,27 @@ td.side-sell {
 .status-new, .status-partially_filled {
       background-color: #e6f7ff;
 }
+
+/* Styles pour le tableau des signaux */
+#signals-output {
+    background: #fffbe6;
+    border: 1px solid #ffe58f;
+    padding: 8px;
+    margin-bottom: 15px;
+    min-height: 40px;
+    max-height: 7.5em; /* 4 lignes environ */
+    overflow-y: auto;
+}
+.signals-table {
+    width: 100%;
+    font-size: 0.95em;
+    border-collapse: collapse;
+}
+.signals-table th, .signals-table td {
+    border: 1px solid #ffe58f;
+    padding: 2px 6px;
+    text-align: center;
+}
+.signals-table th {
+    background: #fff3bf;
+}

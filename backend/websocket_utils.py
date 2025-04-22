@@ -1,12 +1,13 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/websocket_utils.py
 import logging
 import json
-import asyncio # Keep asyncio import in case needed elsewhere, though not directly used in sync broadcast
+import asyncio  # Keep asyncio import in case needed elsewhere, though not directly used in sync broadcast
 from typing import Dict, Any, Set
 
 logger = logging.getLogger(__name__)
 
-connected_clients: Set = set() # Assuming this set holds the WebSocket client objects
+connected_clients: Set = set()  # Assuming this set holds the WebSocket client objects
+
 
 def broadcast_message(message_dict: dict):
     """Envoie un message JSON à tous les clients WebSocket connectés."""
@@ -30,9 +31,16 @@ def broadcast_message(message_dict: dict):
                 remote_addr = "?"
                 try:
                     # Accessing environ might depend on the specific WebSocket library implementation
-                    remote_addr = ws.environ.get('REMOTE_ADDR', '?') if hasattr(ws, 'environ') else '?'
-                except: pass # Ignore errors getting address
-                logger.warning(f"Erreur envoi WS broadcast vers {remote_addr}: {e}. Client marqué pour suppression.")
+                    remote_addr = (
+                        ws.environ.get("REMOTE_ADDR", "?")
+                        if hasattr(ws, "environ")
+                        else "?"
+                    )
+                except:
+                    pass  # Ignore errors getting address
+                logger.warning(
+                    f"Erreur envoi WS broadcast vers {remote_addr}: {e}. Client marqué pour suppression."
+                )
                 disconnected_clients.add(ws)
 
         # Remove disconnected clients outside the loop
@@ -43,7 +51,10 @@ def broadcast_message(message_dict: dict):
             logger.info(f"Removed {len(disconnected_clients)} disconnected client(s).")
 
     except TypeError as e:
-        logger.error(f"Erreur de sérialisation JSON lors du broadcast WS: {e} - Data: {message_dict}", exc_info=True)
+        logger.error(
+            f"Erreur de sérialisation JSON lors du broadcast WS: {e} - Data: {message_dict}",
+            exc_info=True,
+        )
     except Exception as e:
         logger.error(f"Erreur inattendue lors du broadcast WS: {e}", exc_info=True)
 
@@ -53,25 +64,36 @@ def broadcast_state_update():
     # Imports locaux pour éviter dépendances circulaires au chargement
     from state_manager import state_manager
     from config_manager import config_manager
+
     try:
         current_state = state_manager.get_state()
-        excluded_keys = {'main_thread', 'websocket_client', 'keepalive_thread'} # Exclure objets non sérialisables/internes
-        state_serializable = {k: v for k, v in current_state.items() if k not in excluded_keys}
+        excluded_keys = {
+            "main_thread",
+            "websocket_client",
+            "keepalive_thread",
+        }  # Exclure objets non sérialisables/internes
+        state_serializable = {
+            k: v for k, v in current_state.items() if k not in excluded_keys
+        }
 
         # Ajouter des données potentiellement utiles non stockées directement dans l'état principal
         state_serializable["config"] = config_manager.get_config()
         state_serializable["latest_book_ticker"] = state_manager.get_book_ticker()
-        state_serializable["order_history"] = state_manager.get_order_history() # Inclure l'historique
+        state_serializable["order_history"] = (
+            state_manager.get_order_history()
+        )  # Inclure l'historique
 
         logger.debug("Broadcasting full state update...")
         broadcast_message({"type": "status_update", "state": state_serializable})
     except Exception as e:
         logger.error(f"Erreur dans broadcast_state_update: {e}", exc_info=True)
 
+
 def broadcast_order_history_update():
     """Récupère l'historique des ordres et le diffuse."""
     # Import local
     from state_manager import state_manager
+
     try:
         history = state_manager.get_order_history()
         logger.info("Broadcasting order history update...")
@@ -79,29 +101,51 @@ def broadcast_order_history_update():
     except Exception as e:
         logger.error(f"Erreur dans broadcast_order_history_update: {e}", exc_info=True)
 
+
 # --- AJOUT DE LA FONCTION MANQUANTE ---
 def broadcast_ticker_update(ticker_data: Dict[str, Any]):
     """Diffuse uniquement les données du ticker aux clients."""
     # logger.debug(f"Broadcasting Ticker Update for {ticker_data.get('s')}") # Verbeux
     try:
         # Appel direct car broadcast_message est synchrone dans cet exemple
-        broadcast_message({
-            "type": "ticker_update", # Type spécifique pour le frontend
-            "ticker": ticker_data
-        })
+        broadcast_message(
+            {
+                "type": "ticker_update",  # Type spécifique pour le frontend
+                "ticker": ticker_data,
+            }
+        )
     except Exception as e:
         # Logguer toute erreur inattendue pendant le broadcast du ticker
         logger.error(f"Erreur dans broadcast_ticker_update: {e}", exc_info=True)
+
+
 # --- FIN AJOUT ---
 
 
+def broadcast_signal_event(
+    signal_type: str, direction: str, valid: bool, reason: str, extra: dict[str, Any] | None = None
+):
+    """Diffuse un événement de signal (entrée/sortie, validé ou non) aux clients WebSocket."""
+    event = {
+        "type": "signal_event",
+        "signal_type": signal_type,  # e.g. 'entry', 'exit'
+        "direction": direction,  # e.g. 'LONG', 'SHORT', 'BUY', 'SELL', or ''
+        "valid": valid,  # True si validé, False sinon
+        "reason": reason,  # Message explicatif
+    }
+    if extra:
+        event.update(extra)
+    broadcast_message(event)
+
+
 # --- Exports ---
-# MODIFIÉ: Ajout de broadcast_ticker_update à __all__
+# MODIFIÉ: Ajout de broadcast_signal_event à __all__
 __all__ = [
-    'connected_clients',
-    'broadcast_message',
-    'broadcast_state_update',
-    'broadcast_order_history_update',
-    'broadcast_ticker_update' # Export de la nouvelle fonction
+    "connected_clients",
+    "broadcast_message",
+    "broadcast_state_update",
+    "broadcast_order_history_update",
+    "broadcast_ticker_update",
+    "broadcast_signal_event",  # Export de la nouvelle fonction
 ]
 # --- FIN MODIFIÉ ---

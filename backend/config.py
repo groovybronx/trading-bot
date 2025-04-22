@@ -49,7 +49,7 @@ SCALPING_LIMIT_ORDER_TIMEOUT_MS = (
     5000  # Temps (ms) avant d'annuler un ordre LIMIT non rempli
 )
 SCALPING_DEPTH_LEVELS = 5  # Nombre de niveaux du carnet à écouter (ex: 5, 10, 20)
-SCALPING_DEPTH_SPEED = "100ms"  # Vitesse de MàJ du carnet ('100ms' ou '1000ms')
+SCALPING_DEPTH_SPEED = "1000ms"  # Vitesse de MàJ du carnet ('100ms' ou '1000ms')
 # --- Paramètres spécifiques à VOTRE stratégie scalping (Exemples) ---
 SCALPING_SPREAD_THRESHOLD = 0.0001  # Ex: Seuil d'écart relatif pour entrer
 SCALPING_IMBALANCE_THRESHOLD = 1.5  # Ex: Ratio Bid/Ask pour déséquilibre du carnet
@@ -76,8 +76,8 @@ BB_STD = 2
 VOLUME_MA_PERIOD = 20
 
 # Gestion des Sorties
-STOP_LOSS_PERCENTAGE = 0.005  # 0.5%
-TAKE_PROFIT_1_PERCENTAGE = 0.0075  # 0.75%
+STOP_LOSS_PERCENTAGE = 0.01  # 1% du prix d'entrée
+TAKE_PROFIT_1_PERCENTAGE = 0.01
 TAKE_PROFIT_2_PERCENTAGE = 0.01  # 1%
 TRAILING_STOP_PERCENTAGE = 0.003  # 0.3%
 TIME_STOP_MINUTES = 15
@@ -89,6 +89,17 @@ RISK_PER_TRADE_PERCENTAGE = 0.01  # 1% risque par trade
 # --- Paramètres de Risque (Communs) ---
 RISK_PER_TRADE = 1  # Risque par trade (en pourcentage du capital total)
 CAPITAL_ALLOCATION = 50  # Utiliser 50% du capital pour ce bot/stratégie
+
+# --- Paramètres SWING (centralisés ici) ---
+EMA_SHORT_PERIOD = 9
+EMA_LONG_PERIOD = 21
+EMA_FILTER_PERIOD = 50
+RSI_PERIOD = 14
+RSI_OVERBOUGHT = 75
+RSI_OVERSOLD = 25
+VOLUME_AVG_PERIOD = 20
+USE_EMA_FILTER = True
+USE_VOLUME_CONFIRMATION = False
 
 # --- Vérification Clés API ---
 # MODIFIÉ: Message de log plus clair

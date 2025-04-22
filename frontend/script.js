@@ -212,6 +212,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         // Server might send pings, client usually handles pongs automatically
                         // If explicit pong is needed: ws.send(JSON.stringify({ type: 'pong' }));
                         break;
+                    case 'signal_event':
+                        displaySignalEvent(data);
+                        break;
                     default:
                         console.warn('Unknown WebSocket message type received:', data);
                         appendLog(`[WS Type Inconnu: ${data.type}] ${JSON.stringify(data.message || data.payload || data)}`, 'warn');
@@ -559,5 +562,36 @@ document.addEventListener('DOMContentLoaded', () => {
         updateParameterVisibility(strategySelector.value);
     }
     connectWebSocket();
+
+    function displaySignalEvent(event) {
+        const container = document.getElementById("signals-output");
+        if (!container) return;
+        // Crée le tableau s'il n'existe pas
+        let table = container.querySelector("table");
+        if (!table) {
+            table = document.createElement("table");
+            table.className = "signals-table";
+            table.innerHTML = `<thead><tr><th>Heure</th><th>Type</th><th>Direction</th><th>Validé</th><th>Raison</th><th>Prix</th></tr></thead><tbody></tbody>`;
+            container.innerHTML = "";
+            container.appendChild(table);
+        }
+        const tbody = table.querySelector("tbody");
+        const ts = new Date().toLocaleTimeString();
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>${ts}</td>
+            <td>${event.signal_type ? event.signal_type.toUpperCase() : ""}</td>
+            <td>${event.direction ? event.direction.toUpperCase() : ""}</td>
+            <td>${event.valid ? "✅" : "❌"}</td>
+            <td>${event.reason || ""}</td>
+            <td>${event.price !== undefined ? event.price : ""}</td>
+        `;
+        // Ajoute la nouvelle ligne en haut
+        tbody.insertBefore(row, tbody.firstChild);
+        // Limite à 4 lignes
+        while (tbody.rows.length > 4) {
+            tbody.deleteRow(tbody.rows.length - 1);
+        }
+    }
 
 }); // End DOMContentLoaded
