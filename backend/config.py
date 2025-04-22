@@ -4,93 +4,69 @@ import os
 from dotenv import load_dotenv
 import logging
 
-# MODIFIÉ: Charger les variables d'environnement au début
+# Charger les variables d'environnement au début
 load_dotenv()
-print("Variables d'environnement chargées.")  # Debug print
+# Remplacer les prints par des logs pour une meilleure gestion en production
+logger = logging.getLogger(__name__)
+logger.debug("Variables d'environnement chargées via dotenv.")
 
 # --- ATTENTION : Configuration des Clés API ---
-# MODIFIÉ: Utilisation de os.getenv pour lire les clés depuis .env ou variables système
-# Assurez-vous que votre fichier .env est dans le même répertoire ou un répertoire parent,
-# ou que les variables d'environnement sont définies globalement.
+# Utilisation de os.getenv pour lire les clés depuis .env ou variables système
 BINANCE_API_KEY = os.getenv("ENV_API_KEY", "YOUR_API_KEY_PLACEHOLDER")
 BINANCE_API_SECRET = os.getenv("ENV_API_SECRET", "YOUR_SECRET_KEY_PLACEHOLDER")
 
-# --- AJOUT DEBUG ---
-print(
-    f"DEBUG: Clé lue par os.getenv: '{BINANCE_API_KEY[:5]}...'"
-)  # Affiche les 5 premiers caractères
-print(
-    f"DEBUG: Secret lu par os.getenv: '{BINANCE_API_SECRET[:5]}...'"
-)  # Affiche les 5 premiers caractères
+# Log de débogage (optionnel, plus propre que print)
+# logger.debug(f"Clé API chargée (début): '{BINANCE_API_KEY[:5]}...'")
+# logger.debug(f"Secret API chargé (début): '{BINANCE_API_SECRET[:5]}...'")
 
 # --- Paramètres Généraux ---
 SYMBOL = "BTCUSDT"
-TIMEFRAME = "1m"  # Moins pertinent pour le scalping pur, mais gardé pour contexte/UI
+TIMEFRAME = "1m"  # Pertinent pour stratégies basées sur klines (SWING, SCALPING2)
 
 # --- Utiliser le Testnet Binance ---
-# MODIFIÉ: Lire USE_TESTNET depuis les variables d'environnement si possible
-# La valeur par défaut est True si non définie dans .env
+# Lire USE_TESTNET depuis les variables d'environnement si possible
 USE_TESTNET_STR = os.getenv("ENV_USE_TESTNET", "True")
 USE_TESTNET = USE_TESTNET_STR.lower() in ("true", "1", "t", "yes", "y")
-
-print(
-    f"USE_TESTNET: {USE_TESTNET} (lu depuis .env: '{USE_TESTNET_STR}')"
-)  # Debug print
+logger.debug(f"USE_TESTNET configuré à: {USE_TESTNET} (valeur lue: '{USE_TESTNET_STR}')")
 
 # --- Type de Stratégie ---
-# Choisir 'SCALPING' ou 'SWING' (ou autre nom pour l'ancienne stratégie EMA/RSI)
-STRATEGY_TYPE = "SCALPING"
+# Choisir 'SCALPING', 'SCALPING2' ou 'SWING'
+STRATEGY_TYPE = "SCALPING" # Valeur par défaut, sera gérée par ConfigManager
 
-# --- Paramètres Scalping (Nouveaux) ---
-# Note: Ces valeurs sont des exemples, à ajuster IMPÉRATIVEMENT
+# --- Paramètres Communs (Gestion du Risque/Capital) ---
+# Ces valeurs sont souvent fournies en % par l'utilisateur via l'UI
+# ConfigManager les convertira en fractions décimales pour l'usage interne
+RISK_PER_TRADE = 1.0  # Risque par trade en POURCENTAGE du capital alloué (ex: 1.0 pour 1%)
+CAPITAL_ALLOCATION = 50.0 # POURCENTAGE du capital total à allouer (ex: 50.0 pour 50%)
+STOP_LOSS_PERCENTAGE = 0.5 # POURCENTAGE de perte max par trade (ex: 0.5 pour 0.5%)
+TAKE_PROFIT_1_PERCENTAGE = 1.0 # POURCENTAGE de gain pour TP1 (ex: 1.0 pour 1%)
+TAKE_PROFIT_2_PERCENTAGE = 1.5 # POURCENTAGE de gain pour TP2 (ex: 1.5 pour 1.5%)
+TRAILING_STOP_PERCENTAGE = 0.3 # POURCENTAGE pour le trailing stop (ex: 0.3 pour 0.3%)
+TIME_STOP_MINUTES = 15 # Durée maximale (minutes) d'une position avant sortie forcée
+
+# --- Paramètres Scalping (Stratégie 1: Basée sur Order Book) ---
 SCALPING_ORDER_TYPE = "MARKET"  # 'MARKET' ou 'LIMIT'
 SCALPING_LIMIT_TIF = "GTC"  # Time in Force pour ordres LIMIT ('GTC', 'IOC', 'FOK')
-SCALPING_LIMIT_ORDER_TIMEOUT_MS = (
-    5000  # Temps (ms) avant d'annuler un ordre LIMIT non rempli
-)
-SCALPING_DEPTH_LEVELS = 5  # Nombre de niveaux du carnet à écouter (ex: 5, 10, 20)
-SCALPING_DEPTH_SPEED = "1000ms"  # Vitesse de MàJ du carnet ('100ms' ou '1000ms')
-# --- Paramètres spécifiques à VOTRE stratégie scalping (Exemples) ---
-SCALPING_SPREAD_THRESHOLD = 0.0001  # Ex: Seuil d'écart relatif pour entrer
-SCALPING_IMBALANCE_THRESHOLD = 1.5  # Ex: Ratio Bid/Ask pour déséquilibre du carnet
-SCALPING_MIN_TRADE_VOLUME = (
-    0.1  # Ex: Volume minimum sur aggTrade pour confirmer momentum
-)
+SCALPING_LIMIT_ORDER_TIMEOUT_MS = 5000 # Temps (ms) avant d'annuler un ordre LIMIT non rempli
+SCALPING_DEPTH_LEVELS = 5  # Nombre de niveaux du carnet (5, 10, 20)
+SCALPING_DEPTH_SPEED = "1000ms"  # Vitesse MàJ carnet ('100ms' ou '1000ms')
+SCALPING_SPREAD_THRESHOLD = 0.0001  # Écart relatif max pour entrer (fraction, ex: 0.0001 = 0.01%)
+SCALPING_IMBALANCE_THRESHOLD = 1.5  # Ratio Bid/Ask minimum pour entrer
 
-# --- Paramètres Scalping Avancé ---
-# Supertrend
+# --- Paramètres Scalping 2 (Stratégie 2: Basée sur Indicateurs Techniques) ---
+# Périodes indicateurs
 SUPERTREND_ATR_PERIOD = 3
 SUPERTREND_ATR_MULTIPLIER = 1.5
-
-# RSI & Stochastic
 SCALPING_RSI_PERIOD = 7
 STOCH_K_PERIOD = 14
 STOCH_D_PERIOD = 3
 STOCH_SMOOTH = 3
-
-# Bollinger Bands
 BB_PERIOD = 20
-BB_STD = 2
-
-# Volume
+BB_STD = 2.0
 VOLUME_MA_PERIOD = 20
+# Note: SL/TP/Trailing/TimeStop sont partagés via les paramètres communs
 
-# Gestion des Sorties
-STOP_LOSS_PERCENTAGE = 0.01  # 1% du prix d'entrée
-TAKE_PROFIT_1_PERCENTAGE = 0.01
-TAKE_PROFIT_2_PERCENTAGE = 0.01  # 1%
-TRAILING_STOP_PERCENTAGE = 0.003  # 0.3%
-TIME_STOP_MINUTES = 15
-
-# Gestion du Risque
-MAX_DAILY_LOSS_PERCENTAGE = 0.03  # 3% perte max quotidienne
-RISK_PER_TRADE_PERCENTAGE = 0.01  # 1% risque par trade
-
-# --- Paramètres de Risque (Communs) ---
-RISK_PER_TRADE = 1  # Risque par trade (en pourcentage du capital total)
-CAPITAL_ALLOCATION = 50  # Utiliser 50% du capital pour ce bot/stratégie
-
-# --- Paramètres SWING (centralisés ici) ---
+# --- Paramètres SWING (Stratégie 3: EMA/RSI/Volume) ---
 EMA_SHORT_PERIOD = 9
 EMA_LONG_PERIOD = 21
 EMA_FILTER_PERIOD = 50
@@ -100,34 +76,31 @@ RSI_OVERSOLD = 25
 VOLUME_AVG_PERIOD = 20
 USE_EMA_FILTER = True
 USE_VOLUME_CONFIRMATION = False
+# Note: SL/TP/Trailing/TimeStop sont partagés via les paramètres communs
 
 # --- Vérification Clés API ---
-# MODIFIÉ: Message de log plus clair
+# Message de log plus clair
 if (
     BINANCE_API_KEY == "YOUR_API_KEY_PLACEHOLDER"
     or BINANCE_API_SECRET == "YOUR_SECRET_KEY_PLACEHOLDER"
 ):
-    print("\n" + "=" * 60)
-    print("ATTENTION : Les clés API Binance ne semblent pas configurées !")
-    print("Veuillez les définir dans votre fichier .env (ENV_API_KEY, ENV_API_SECRET)")
-    print("ou comme variables d'environnement système.")
-    print("Le bot ne pourra pas fonctionner sans clés valides.")
-    print("=" * 60 + "\n")
-# NOUVEAU: Vérification supplémentaire si les clés sont vides
+    logger.critical("\n" + "=" * 60)
+    logger.critical("ATTENTION : Les clés API Binance ne semblent pas configurées !")
+    logger.critical("Veuillez les définir dans votre fichier .env (ENV_API_KEY, ENV_API_SECRET)")
+    logger.critical("ou comme variables d'environnement système.")
+    logger.critical("Le bot ne pourra pas fonctionner sans clés valides.")
+    logger.critical("=" * 60 + "\n")
 elif not BINANCE_API_KEY or not BINANCE_API_SECRET:
-    print("\n" + "=" * 60)
-    print("ATTENTION : Une ou les deux clés API Binance sont VIDES !")
-    print("Veuillez vérifier votre fichier .env ou vos variables d'environnement.")
-    print("Le bot ne pourra pas fonctionner sans clés valides.")
-    print("=" * 60 + "\n")
+    logger.critical("\n" + "=" * 60)
+    logger.critical("ATTENTION : Une ou les deux clés API Binance sont VIDES !")
+    logger.critical("Veuillez vérifier votre fichier .env ou vos variables d'environnement.")
+    logger.critical("Le bot ne pourra pas fonctionner sans clés valides.")
+    logger.critical("=" * 60 + "\n")
 else:
-    # --- AJOUT CONFIRMATION ---
-    print(
-        "INFO: config.py confirme que les clés API ont été chargées depuis l'environnement (non-placeholder, non-vides)."
-    )
-    # --- FIN AJOUT CONFIRMATION ---
+    logger.info("config.py: Clés API chargées depuis l'environnement (non-placeholder, non-vides).")
 
-# NOUVEAU: Log final pour confirmer les paramètres chargés
-print(
-    f"Config chargée: SYMBOL={SYMBOL}, TIMEFRAME={TIMEFRAME}, STRATEGY={STRATEGY_TYPE}, TESTNET={USE_TESTNET}"
+# Log final pour confirmer les paramètres par défaut chargés (avant ConfigManager)
+logger.debug(
+    f"Config Defaults: SYMBOL={SYMBOL}, TIMEFRAME={TIMEFRAME}, STRATEGY={STRATEGY_TYPE}, TESTNET={USE_TESTNET}"
 )
+

@@ -5,148 +5,138 @@ import os
 import queue
 import time
 import threading
-from flask import Flask, render_template, jsonify, request # Added request for client IP
+from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
-from flask_sock import Sock, ConnectionClosed # Import ConnectionClosed
+from flask_sock import Sock, ConnectionClosed
 
-# Load .env before other imports that might need it
 from dotenv import load_dotenv
 load_dotenv()
 print(">>> app.py: load_dotenv() executed.")
 
-import config # Loads config based on .env
-from logging_config import setup_logging, log_queue, WebSocketLogHandler
+import config
+# Importer connected_clients pour l'utiliser dans la route WS
+from websocket_utils import connected_clients # Importer le set partagé
+from logging_config import setup_logging, log_queue # Importer setup_logging et log_queue
 from api_routes import api_bp
-# Import the instance directly
 from state_manager import state_manager
-# config_manager is likely used implicitly by state_manager/bot_core, no direct import needed here usually
-# import config_manager
-# websocket_handlers are used by bot_core, no direct import needed here
-# import websocket_handlers
 from websocket_utils import (
-    connected_clients,
     broadcast_state_update,
-    broadcast_order_history_update,
+    # broadcast_order_history_update, # Déjà inclus dans broadcast_state_update
 )
+import bot_core # Importer pour arrêt potentiel
 
 # --- Logging Setup ---
-# Create the handler instance first
-ws_log_handler = WebSocketLogHandler(connected_clients)
-# Setup logging, passing the handler and queue
-log_listener = setup_logging(log_queue, ws_log_handler)
-# Get the root logger
-logger = logging.getLogger()
+# Configurer le logging (ne prend plus connected_clients en argument)
+log_listener = setup_logging(log_queue)
+logger = logging.getLogger() # Obtenir le logger root configuré
 
 # --- Flask App Setup ---
-app = Flask(__name__,
-            static_folder="../frontend", # Serve static files from frontend folder
-            template_folder="../frontend") # Serve index.html from frontend folder
-CORS(app) # Enable Cross-Origin Resource Sharing
-sock = Sock(app) # Initialize Flask-Sock
-app.register_blueprint(api_bp, url_prefix="/api") # Register API routes
+app = Flask(__name__, static_folder="../frontend", template_folder="../frontend")
+CORS(app)
+sock = Sock(app)
+app.register_blueprint(api_bp, url_prefix="/api")
 
-# --- WebSocket Route for Logs & Control ---
+# --- WebSocket Route ---
 @sock.route("/ws_logs")
 def handle_websocket(ws):
-    """Handles WebSocket connections for log streaming and potentially control."""
-    # Use request context to get IP, fallback if not available (e.g., during tests)
+    """Handles WebSocket connections for log streaming and state updates."""
     client_ip = request.remote_addr or "Unknown"
     logger.info(f"WebSocket client connected: {client_ip}")
-    connected_clients.add(ws)
-    ws_log_handler.clients = connected_clients # Update handler's client list
+    connected_clients.add(ws) # Ajouter au set partagé
 
     try:
-        # Send initial connection confirmation and current state/history
+        # Envoyer confirmation et état initial
         ws.send(json.dumps({"type": "info", "message": "Connected to backend WebSocket."}))
-        broadcast_state_update()
-        broadcast_order_history_update()
+        broadcast_state_update() # Envoyer état actuel (inclut config, ticker, historique)
     except ConnectionClosed:
-         logger.warning(f"WebSocket client {client_ip} disconnected immediately after connect.")
+         logger.warning(f"WebSocket client {client_ip} disconnected immediately.")
          if ws in connected_clients: connected_clients.remove(ws)
-         ws_log_handler.clients = connected_clients
-         return # Exit handler for this client
+         return
     except Exception as e:
-        logger.warning(f"Error sending initial message/state to client {client_ip}: {e}")
-        # Attempt to remove client, but continue if possible? Or just exit? Let's exit.
+        logger.warning(f"Error sending initial message/state to {client_ip}: {e}")
         if ws in connected_clients: connected_clients.remove(ws)
-        ws_log_handler.clients = connected_clients
         return
 
-    # Main loop to keep connection alive and potentially receive commands
+    # Boucle pour maintenir la connexion et recevoir potentiellement des commandes
     try:
         while True:
-            # Use receive with a timeout to allow periodic checks/pings
-            message = ws.receive(timeout=30) # Check every 30 seconds
-
+            message = ws.receive(timeout=30) # Timeout pour ping périodique
             if message is not None:
-                # Handle incoming messages if implementing client-side controls later
                 logger.debug(f"Received WS message from {client_ip}: {message}")
-                # Example: parse message, trigger actions
-                # try:
-                #     data = json.loads(message)
-                #     command = data.get('command')
-                #     if command == 'start_bot':
-                #         # Call bot_core.start_bot_core() etc.
-                # except json.JSONDecodeError:
-                #     logger.warning(f"Invalid JSON received from {client_ip}: {message}")
+                # Traiter commandes futures ici...
             else:
-                # Timeout occurred, send a ping to check connection
+                # Timeout -> Envoyer ping
                 try:
-                    # logger.debug(f"Sending ping to client {client_ip}") # Optional: can be noisy
                     ws.send(json.dumps({"type": "ping"}))
                 except ConnectionClosed:
                     logger.info(f"WebSocket client {client_ip} disconnected (ping failed).")
-                    break # Exit loop if ping fails
-                except Exception as e:
-                    logger.warning(f"Error sending ping to client {client_ip}: {e}")
-                    # Consider breaking if ping error persists
                     break
-
+                except Exception as e:
+                    logger.warning(f"Error sending ping to {client_ip}: {e}")
+                    break # Sortir si erreur ping
     except ConnectionClosed as e:
-         # Log specific close codes if available using getattr for safety
-         # --- FIX 1: Use getattr for code and reason ---
-         close_reason = getattr(e, 'reason', 'No reason given')
+         close_reason = getattr(e, 'reason', 'No reason')
          close_code = getattr(e, 'code', 'N/A')
          logger.info(f"WebSocket client {client_ip} disconnected: {close_reason} ({close_code})")
-         # --- END FIX 1 ---
     except Exception as e:
-        # Catch other potential errors during receive/processing
-        logger.error(f"WebSocket error for client {client_ip}: {type(e).__name__} - {e}", exc_info=True)
+        logger.error(f"WebSocket error for client {client_ip}: {e}", exc_info=True)
     finally:
-        # Ensure client is removed from the set on any exit path
         logger.info(f"Cleaning up WebSocket connection for: {client_ip}.")
         if ws in connected_clients:
-            connected_clients.remove(ws)
-        ws_log_handler.clients = connected_clients # Update handler list
-
+            connected_clients.remove(ws) # Assurer suppression du set
 
 # --- Basic HTTP Route ---
 @app.route("/")
 def index():
     """Serves the main frontend page."""
-    # Renders index.html from the template_folder
     return render_template("index.html")
+
+# --- Arrêt Propre ---
+def shutdown_server():
+    logger.info("Shutdown initiated by signal...")
+    # Arrêter le bot core proprement s'il tourne
+    if state_manager.get_state("status") not in ["Arrêté", "STOPPED", "ERROR"]:
+         logger.info("Attempting to stop bot core...")
+         try:
+              bot_core.stop_bot_core()
+         except Exception as e:
+              logger.error(f"Error stopping bot core during shutdown: {e}")
+
+    # Arrêter le listener de logs
+    if log_listener:
+        logger.info("Stopping log listener...")
+        log_listener.stop()
+        logger.info("Log listener stopped.")
+
+    # Tenter de fermer les WebSockets restants (peut être difficile)
+    logger.info(f"Closing remaining {len(connected_clients)} WebSocket connections...")
+    clients_copy = list(connected_clients)
+    for ws in clients_copy:
+        try:
+            ws.close(reason='Server shutting down')
+        except: pass # Ignorer erreurs à ce stade
+    logger.info("WebSocket connections closed.")
+
+    # Demander l'arrêt de Flask (nécessite un contexte de requête ou une astuce)
+    # func = request.environ.get('werkzeug.server.shutdown')
+    # if func is None:
+    #     logger.warning('Not running with the Werkzeug Server, cannot shutdown programmatically.')
+    # else:
+    #     func()
+    # logger.info("Flask server shutdown requested.") # Ne sera peut-être pas loggué
 
 # --- Main Execution ---
 if __name__ == "__main__":
     logger.info("Starting Flask server...")
     try:
-        # Use development server for testing; switch to production server (like gunicorn/waitress) later
-        # debug=False and use_reloader=False are important for stability with threads
+        # Utiliser le serveur de développement Flask pour tests
+        # Pour la production, utiliser Gunicorn ou Waitress
         app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         logger.info("Shutdown requested via Ctrl+C.")
-        # Add cleanup for bot_core if it was running?
-        # bot_core.stop_bot_core() # Maybe call this? Depends on desired shutdown behavior.
     except Exception as e:
          logger.critical(f"Flask server failed to start or run: {e}", exc_info=True)
     finally:
-        # Ensure log listener thread stops cleanly
-        # --- FIX 2: Remove is_alive() check ---
-        if log_listener:
-        # --- END FIX 2 ---
-            logger.info("Stopping log listener...")
-            log_listener.stop() # Uses the method from logging_config
-            logger.info("Log listener stopped.")
+        # Exécuter le nettoyage ici aussi, au cas où la boucle principale se termine autrement
+        shutdown_server()
         logger.info("Flask server shut down.")
-

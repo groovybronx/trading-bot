@@ -12,7 +12,6 @@
     <header>
         <h1>Trading Bot Dashboard</h1>
     </header>
-    <div id="signals-output"></div>
 
     <main>
         <section id="bot-status">
@@ -29,11 +28,10 @@
                     class="status-value">N/A</span></p>
             <!-- *** FIN CORRECTION *** -->
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
-            <div id="signals-output"></div>
 
         </section>
 
-
+        <div id="signals-output" style="max-height:7.5em; overflow-y:auto; margin-bottom:15px;"></div>
 
         <section id="order-history">
             <h2>Historique des Ordres (Session)</h2>
@@ -87,6 +85,21 @@
                 </select>
             </div>
             <hr>
+
+            <section id="general-params">
+                <h3>Paramètres Généraux</h3>
+                <div class="param-grid">
+                    <div>
+                        <label for="param-risk">Risque par ordre (%) :</label>
+                        <input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="100" step="0.1">
+                    </div>
+                    <div>
+                        <label for="param-capital-allocation">Capital investi (%) :</label>
+                        <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100"
+                            step="1">
+                    </div>
+                </div>
+            </section>
 
             <div id="swing-params">
                 <h3>Paramètres SWING</h3>

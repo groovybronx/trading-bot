@@ -1,166 +1,195 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/utils/order_utils.py
 import logging
-from decimal import Decimal, ROUND_DOWN, InvalidOperation
-from typing import Dict, Any
+from decimal import Decimal, ROUND_DOWN, InvalidOperation, Context, setcontext, getcontext, ROUND_HALF_UP
+from typing import Dict, Any, Optional, Union # Ajout Union
 
 logger = logging.getLogger(__name__)
 
+# Configurer le contexte Decimal pour une précision suffisante (optionnel, peut être géré localement)
+# setcontext(Context(prec=18))
 
-def format_quantity(quantity: float, symbol_info: dict) -> float:
-    """Format quantity to meet exchange requirements.
+def get_symbol_filter(symbol_info: Dict[str, Any], filter_type: str) -> Optional[Dict[str, Any]]:
+    """Récupère un filtre spécifique depuis symbol_info."""
+    if not symbol_info or "filters" not in symbol_info:
+        # logger.warning(f"get_symbol_filter: Données symbol_info invalides ou manquantes.") # Verbeux
+        return None
+    return next((f for f in symbol_info["filters"] if f.get("filterType") == filter_type), None)
 
-    Args:
-        quantity: The quantity to format
-        symbol_info: Symbol info dictionary containing filters
-
-    Returns:
-        float: Formatted quantity respecting filters
+def format_quantity(quantity: Union[float, Decimal, str], symbol_info: Dict[str, Any]) -> Optional[Decimal]:
+    """
+    Formate la quantité (BASE asset) pour respecter les filtres LOT_SIZE (stepSize, minQty).
+    Retourne la quantité formatée en Decimal, ou None si invalide ou < minQty.
+    Ne gère PAS le filtre NOTIONAL ici.
     """
     try:
-        filters = symbol_info.get("filters", [])
+        qty_decimal = Decimal(str(quantity))
+        if qty_decimal <= 0:
+             logger.error(f"format_quantity: Quantité initiale invalide ({qty_decimal}).")
+             return None
 
-        # Get LOT_SIZE filter
-        lot_size = next((f for f in filters if f["filterType"] == "LOT_SIZE"), None)
-        if lot_size:
-            min_qty = float(lot_size["minQty"])
-            step_size = float(lot_size["stepSize"])
+        lot_size_filter = get_symbol_filter(symbol_info, "LOT_SIZE")
+        if not lot_size_filter:
+            logger.warning(f"format_quantity: Filtre LOT_SIZE non trouvé pour {symbol_info.get('symbol')}. Formatage basique.")
+            # Retourner avec une précision raisonnable par défaut si pas de filtre
+            return qty_decimal.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
 
-            # Validate minimum quantity
-            if quantity < min_qty:
-                raise ValueError(f"Quantity {quantity} below minimum {min_qty}")
+        min_qty = Decimal(lot_size_filter.get("minQty", "0"))
+        max_qty = Decimal(lot_size_filter.get("maxQty", "inf")) # Utiliser 'inf' pour gérer l'absence
+        step_size = Decimal(lot_size_filter.get("stepSize", "0"))
 
-            # Round to step size precision
-            decimal_places = len(str(step_size).split(".")[-1].rstrip("0"))
-            quantity = round(quantity - (quantity % step_size), decimal_places)
+        # Vérifier minQty AVANT arrondi pour éviter calculs inutiles
+        if qty_decimal < min_qty:
+            logger.error(f"format_quantity: Quantité initiale {qty_decimal} < minQty {min_qty}. Impossible.")
+            return None
 
-        # Check MIN_NOTIONAL filter
-        min_notional = next(
-            (f for f in filters if f["filterType"] == "MIN_NOTIONAL"), None
-        )
-        if min_notional:
-            min_value = float(min_notional["minNotional"])
-            return max(quantity, min_value)
+        if qty_decimal > max_qty:
+             logger.warning(f"format_quantity: Quantité {qty_decimal} > maxQty {max_qty}. Tronquée à maxQty.")
+             qty_decimal = max_qty
 
-        return float(f"{quantity:.8f}")
+        if step_size > 0:
+            # Calculer le nombre de décimales basé sur step_size
+            exponent = step_size.normalize().as_tuple().exponent
+            decimal_places = exponent * -1 if isinstance(exponent, int) and exponent < 0 else 0
+            quantizer = Decimal('1e-' + str(decimal_places))
 
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Error formatting quantity: {str(e)}")
+            # Appliquer le step_size en arrondissant vers le bas (ROUND_DOWN)
+            # C'est la méthode la plus sûre pour ne pas dépasser le solde disponible
+            formatted_qty = (qty_decimal // step_size) * step_size
+            formatted_qty = formatted_qty.quantize(quantizer, rounding=ROUND_DOWN)
 
+            # Vérification finale minQty APRES arrondi
+            if formatted_qty < min_qty:
+                 logger.error(f"format_quantity: Quantité formatée {formatted_qty} < minQty {min_qty} après arrondi stepSize. Impossible.")
+                 return None
 
-def get_min_notional(symbol_info: Dict[str, Any]) -> float:
+            # logger.debug(f"format_quantity: {quantity} -> {formatted_qty} (step: {step_size}, min: {min_qty})") # Verbeux
+            return formatted_qty
+        else:
+            # Si step_size est 0 (ne devrait pas arriver), retourner la quantité validée min/max
+            logger.warning(f"format_quantity: stepSize est 0 pour {symbol_info.get('symbol')}")
+            # Assurer que la quantité respecte minQty même si step_size est 0
+            if qty_decimal < min_qty: return None
+            return qty_decimal.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN) # Précision par défaut
+
+    except (InvalidOperation, TypeError, ValueError, KeyError) as e:
+        logger.error(f"format_quantity: Erreur lors du formatage de la quantité {quantity}: {e}", exc_info=True)
+        return None
+
+def get_min_notional(symbol_info: Dict[str, Any]) -> Decimal:
     """
-    Récupère la valeur MIN_NOTIONAL pour le symbole.
-    Retourne une valeur par défaut élevée (ex: 10.0) si non trouvé ou erreur.
+    Récupère la valeur MIN_NOTIONAL (filtre NOTIONAL ou MIN_NOTIONAL) pour le symbole.
+    Retourne une valeur par défaut (ex: 10.0) si non trouvé ou erreur.
+    Retourne un Decimal.
     """
-    default_min_notional = 10.0  # Valeur USDT par défaut
-    if not symbol_info or "filters" not in symbol_info:
-        logger.error(f"get_min_notional: Données symbol_info invalides ou manquantes.")
-        return default_min_notional
+    default_min_notional = Decimal("10.0") # Valeur USDT par défaut
+    # Binance utilise 'MIN_NOTIONAL' pour les ordres MARKET et 'NOTIONAL' pour les ordres LIMIT
+    # Essayons de récupérer MIN_NOTIONAL d'abord, puis NOTIONAL.minNotional
+    min_notional_filter = get_symbol_filter(symbol_info, "MIN_NOTIONAL")
+    notional_filter = get_symbol_filter(symbol_info, "NOTIONAL")
 
-    min_notional_filter = next(
-        (f for f in symbol_info["filters"] if f.get("filterType") == "NOTIONAL"), None
-    )
     notional_str = None
-
-    if min_notional_filter and "minNotional" in min_notional_filter:
-        notional_str = min_notional_filter["minNotional"]
+    if min_notional_filter:
+        notional_str = min_notional_filter.get("minNotional")
+        # logger.debug(f"get_min_notional: Filtre MIN_NOTIONAL trouvé: {notional_str}")
+    elif notional_filter:
+        notional_str = notional_filter.get("minNotional")
+        # logger.debug(f"get_min_notional: Filtre NOTIONAL trouvé: {notional_str}")
 
     if notional_str:
         try:
-            min_notional_val = float(notional_str)
-            # logger.debug(f"get_min_notional: Filtre MIN_NOTIONAL trouvé pour {symbol_info.get('symbol')}: {min_notional_val}") # Commenté
+            min_notional_val = Decimal(notional_str)
+            # logger.debug(f"get_min_notional: Valeur minNotional extraite: {min_notional_val}") # Verbeux
             return min_notional_val
-        except (ValueError, TypeError):
+        except (InvalidOperation, TypeError):
             logger.error(
-                f"get_min_notional: Impossible de convertir MIN_NOTIONAL '{notional_str}' en float pour {symbol_info.get('symbol')}. Utilisation défaut {default_min_notional}."
+                f"get_min_notional: Impossible de convertir minNotional '{notional_str}'. Utilisation défaut {default_min_notional}."
             )
             return default_min_notional
-    else:
-        logger.warning(
-            f"get_min_notional: Filtre MIN_NOTIONAL non trouvé pour {symbol_info.get('symbol')}. Utilisation défaut {default_min_notional}."
-        )
-        return default_min_notional
 
+    logger.warning(
+        f"get_min_notional: Filtres MIN_NOTIONAL/NOTIONAL non trouvés ou invalides pour {symbol_info.get('symbol')}. Utilisation défaut {default_min_notional}."
+    )
+    return default_min_notional
 
-def validate_order_params(symbol, side, quantity, price=None, order_type="MARKET"):
-    """Validate order parameters before sending to exchange."""
-    if not symbol or not isinstance(symbol, str):
-        raise ValueError("Symbol invalide")
+def check_min_notional(
+        quantity: Optional[Decimal],
+        price: Optional[Decimal],
+        min_notional_value: Decimal
+    ) -> bool:
+    """
+    Vérifie si la valeur notionnelle (quantité * prix) atteint le minimum requis.
+    Retourne True si valide ou si les entrées sont invalides (pour ne pas bloquer inutilement), False sinon.
+    """
+    if quantity is None or price is None or quantity <= 0 or price <= 0:
+        # logger.warning("check_min_notional: Quantité ou prix invalide pour la vérification.") # Verbeux
+        return True # Ne pas bloquer si les données sont mauvaises en amont
 
-    if side not in ["BUY", "SELL"]:
-        raise ValueError("Side doit être 'BUY' ou 'SELL'")
+    notional = quantity * price
+    is_valid = notional >= min_notional_value
+    # if not is_valid: logger.debug(f"check_min_notional: Échec ({notional:.4f} < {min_notional_value:.4f})") # Verbeux
+    return is_valid
 
-    if not quantity or quantity <= 0:
-        raise ValueError("Quantité invalide")
+def get_price_filter(symbol_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Récupère le filtre PRICE_FILTER."""
+    return get_symbol_filter(symbol_info, "PRICE_FILTER")
 
-    if order_type == "LIMIT" and (not price or price <= 0):
-        raise ValueError("Prix invalide pour ordre LIMIT")
-
-    return True
-
-
-def validate_notional(quantity: float, price: float, symbol_info: dict) -> bool:
-    """Validate if order meets minimum notional value requirement.
-
-    Args:
-        quantity: Order quantity
-        price: Current price or order price
-        symbol_info: Symbol info dictionary containing filters
-
-    Returns:
-        bool: True if valid, False otherwise
+def format_price(price: Union[float, Decimal, str], symbol_info: Dict[str, Any]) -> Optional[Decimal]:
+    """
+    Formate le prix pour respecter le filtre PRICE_FILTER (tickSize).
+    Arrondit au tick valide le plus proche (ROUND_HALF_UP).
+    Retourne le prix formaté en Decimal, ou None si invalide.
     """
     try:
-        filters = symbol_info.get("filters", [])
-        min_notional = next(
-            (f for f in filters if f["filterType"] == "MIN_NOTIONAL"), None
-        )
+        price_decimal = Decimal(str(price))
+        if price_decimal <= 0:
+             logger.error(f"format_price: Prix initial invalide ({price_decimal}).")
+             return None
 
-        if min_notional:
-            min_value = float(min_notional["minNotional"])
-            notional = quantity * price
+        price_filter = get_price_filter(symbol_info)
+        if not price_filter:
+            logger.warning(f"format_price: Filtre PRICE_FILTER non trouvé pour {symbol_info.get('symbol')}. Formatage basique.")
+            # Retourner avec une précision raisonnable par défaut
+            return price_decimal.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP) # Arrondi au plus proche
 
-            if notional < min_value:
-                return False
+        min_price = Decimal(price_filter.get("minPrice", "0"))
+        max_price = Decimal(price_filter.get("maxPrice", "inf"))
+        tick_size = Decimal(price_filter.get("tickSize", "0"))
 
-        return True
+        if price_decimal < min_price:
+            logger.error(f"format_price: Prix {price_decimal} < minPrice {min_price}. Impossible.")
+            return None
+        if price_decimal > max_price:
+            logger.warning(f"format_price: Prix {price_decimal} > maxPrice {max_price}. Tronqué à maxPrice.")
+            price_decimal = max_price
 
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Error validating notional: {str(e)}")
+        if tick_size > 0:
+            # Calculer le nombre de décimales basé sur tick_size
+            exponent = tick_size.normalize().as_tuple().exponent
+            decimal_places = exponent * -1 if isinstance(exponent, int) and exponent < 0 else 0
+            quantizer = Decimal('1e-' + str(decimal_places))
 
+            # Appliquer tick_size en arrondissant au tick valide le plus proche
+            # (price / tick_size).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * tick_size
+            # Note: L'implémentation de Binance peut varier légèrement. ROUND_HALF_UP est un choix courant.
+            # L'ancienne méthode avec modulo arrondissait vers le bas, ce qui n'est pas toujours souhaité pour les prix.
+            formatted_price = (price_decimal / tick_size).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * tick_size
+            formatted_price = formatted_price.quantize(quantizer) # Assurer le bon nombre de décimales
 
-def calculate_valid_quantity(
-    quote_amount: float, price: float, symbol_info: dict
-) -> float:
-    """Calculate valid order quantity from quote amount respecting all filters.
+            # Vérification finale minPrice après arrondi
+            if formatted_price < min_price:
+                 # Si l'arrondi fait passer sous minPrice, utiliser minPrice
+                 logger.warning(f"format_price: Prix formaté {formatted_price} < minPrice {min_price}. Utilisation de minPrice.")
+                 formatted_price = min_price.quantize(quantizer)
 
-    Args:
-        quote_amount: Amount in quote currency to spend/receive
-        price: Current price
-        symbol_info: Symbol info dictionary containing filters
+            # logger.debug(f"format_price: {price} -> {formatted_price} (tick: {tick_size})") # Verbeux
+            return formatted_price
+        else:
+            logger.warning(f"format_price: tickSize est 0 pour {symbol_info.get('symbol')}")
+            # Assurer que le prix respecte min/max même si tick_size est 0
+            if price_decimal < min_price: return None
+            price_decimal = min(price_decimal, max_price)
+            return price_decimal.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP) # Précision par défaut
 
-    Returns:
-        float: Valid order quantity
-    """
-    try:
-        # Calculate raw quantity
-        quantity = quote_amount / price
-
-        # Format according to LOT_SIZE
-        quantity = format_quantity(quantity, symbol_info)
-
-        # Validate MIN_NOTIONAL
-        if not validate_notional(quantity, price, symbol_info):
-            filters = symbol_info.get("filters", [])
-            min_notional = next(
-                (f for f in filters if f["filterType"] == "MIN_NOTIONAL"), None
-            )
-            if min_notional:
-                min_value = float(min_notional["minNotional"])
-                quantity = min_value / price
-                quantity = format_quantity(quantity, symbol_info)
-
-        return quantity
-
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Error calculating valid quantity: {str(e)}")
+    except (InvalidOperation, TypeError, ValueError, KeyError) as e:
+        logger.error(f"format_price: Erreur lors du formatage du prix {price}: {e}", exc_info=True)
+        return None

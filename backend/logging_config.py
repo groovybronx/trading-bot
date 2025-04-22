@@ -4,87 +4,76 @@ import queue
 import json
 from logging.handlers import QueueHandler, QueueListener
 import sys
+# from typing import Set # Plus nécessaire
 
-log_queue = queue.Queue(-1)  # Queue de logs
+# Import broadcast_message depuis websocket_utils
+from websocket_utils import broadcast_message # connected_clients n'est plus nécessaire ici
 
-# --- MODIFIÉ: WebSocketLogHandler ---
+log_queue = queue.Queue(-1)  # Queue de logs partagée
+
 class WebSocketLogHandler(logging.Handler):
-    """Handler qui envoie les logs aux clients WebSocket connectés."""
-    def __init__(self, clients_set):
-        super().__init__()
-        self.clients = clients_set # Utiliser le set passé en argument
+    """Handler qui envoie les logs formatés via websocket_utils.broadcast_message."""
 
     def emit(self, record):
-        log_entry = self.format(record)
-        # Déterminer le niveau pour le message JSON
-        level_name = record.levelname.lower()
-        if level_name not in ['debug', 'info', 'warning', 'error', 'critical']:
-            level_name = 'log' # Fallback
+        try:
+            log_entry = self.format(record)
+            level_name = record.levelname.lower()
+            # Assurer un type valide pour le frontend
+            if level_name not in ['debug', 'info', 'warning', 'error', 'critical']:
+                level_name = 'log'
 
-        message = json.dumps({"type": level_name, "message": log_entry})
+            # Créer le dictionnaire du message
+            message_dict = {"type": level_name, "message": log_entry}
 
-        # Copier pour éviter RuntimeError si le set change pendant l'itération
-        disconnected_clients = set()
-        current_clients = list(self.clients) # Utiliser la référence self.clients
+            # Utiliser broadcast_message pour envoyer à tous les clients
+            # broadcast_message gère la sérialisation JSON et les déconnexions
+            broadcast_message(message_dict)
 
-        for ws in current_clients:
-            try:
-                ws.send(message)
-            except Exception:
-                # Marquer pour suppression si l'envoi échoue
-                disconnected_clients.add(ws)
-
-        # Nettoyer les clients déconnectés du set principal (partagé avec app.py)
-        for ws in disconnected_clients:
-             if ws in self.clients:
-                  self.clients.remove(ws)
+        except Exception:
+            # Gérer les erreurs potentielles lors du formatage ou de l'appel broadcast
+            self.handleError(record)
 
 
-def setup_logging(log_queue, ws_log_handler): # Accepter le handler en argument
+def setup_logging(log_queue: queue.Queue): # Ne prend plus ws_clients_set
     """Configure le système de logging."""
-    log_format = '%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s'
-    log_level = logging.DEBUG # Mettre à DEBUG pour voir tous les messages
+    log_format = '%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s' # Format plus détaillé
+    log_level = logging.DEBUG # Niveau global
     formatter = logging.Formatter(log_format)
 
-    logging.basicConfig(level=log_level, format=log_format)
-    
-    logging.getLogger('binance.websocket.websocket_client').setLevel(logging.INFO)
-    # --- Configuration du logging vers la queue (pour WebSocket) ---
-    queue_handler = QueueHandler(log_queue)
-    # queue_handler.setLevel(logging.DEBUG) # Niveau pour les websockets
-    logging.getLogger("binance.api").setLevel(logging.INFO) # Réduire le bruit des logs de l'API Binance
-
-    
-    
-    # Attacher les handlers au logger root
+    # Configurer le logger root
     root_logger = logging.getLogger()
-    root_logger.addHandler(queue_handler)
     if root_logger.hasHandlers():
-        # logging.warning("Nettoyage des handlers pré-existants du root logger.")
-        for handler in root_logger.handlers[:]: # Itérer sur une copie
-            root_logger.removeHandler(handler)
-            handler.close() # Fermer le handler proprement
-    
-     # --- Créer les handlers nécessaires ---
-    # Handler Console
-    console_handler = logging.StreamHandler(sys.stdout) # Explicitement vers stdout
+         logger = logging.getLogger(__name__)
+         # logger.warning("Nettoyage des handlers pré-existants du root logger.")
+         for handler in root_logger.handlers[:]:
+              root_logger.removeHandler(handler)
+              handler.close()
+    root_logger.setLevel(log_level)
+
+    # --- Handlers ---
+    # 1. Handler Console (toujours utile pour le debug serveur)
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
-    # console_handler.setLevel(logging.INFO) # Optionnel: Niveau spécifique pour console
+    # console_handler.setLevel(logging.INFO) # Niveau spécifique pour console si souhaité
+    root_logger.addHandler(console_handler) # Ajouter directement au root
 
-    # Handler vers la Queue (pour WebSocket)
+    # 2. Handler vers la Queue (pour découplage)
     queue_handler = QueueHandler(log_queue)
-    # Le niveau effectif sera celui du root logger (DEBUG)
+    # Pas besoin de setLevel ici, le root logger filtre déjà
+    root_logger.addHandler(queue_handler)
 
-    # --- Créer le Listener UNIQUEMENT pour le WebSocket Handler ---
-    # Il consomme la queue et envoie seulement au ws_log_handler
-    listener = QueueListener(log_queue, ws_log_handler, respect_handler_level=True)
+    # --- Listener ---
+    # Le listener écoute la queue et utilise le WebSocketLogHandler
+    # WebSocketLogHandler utilise maintenant broadcast_message directement
+    websocket_handler_instance = WebSocketLogHandler() # Plus besoin de passer le set
+    websocket_handler_instance.setFormatter(formatter) # Appliquer le formateur au handler WS
 
-
-    # Ne pas ajouter console_handler directement au root si on utilise QueueListener
-    # root_logger.addHandler(console_handler)
+    # Créer le listener avec SEULEMENT le handler WebSocket
+    listener = QueueListener(log_queue, websocket_handler_instance, respect_handler_level=True)
 
     # Démarrer le listener
     listener.start()
-    logging.info("Logging configuré (Console + WebSocket via Queue).")
+    logger = logging.getLogger(__name__)
+    logger.info("Logging configuré (Console + WebSocket via Queue).") # Add logger
 
     return listener # Retourner le listener pour pouvoir l'arrêter proprement

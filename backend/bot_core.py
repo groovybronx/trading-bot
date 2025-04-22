@@ -19,8 +19,7 @@ from state_manager import state_manager
 from config_manager import config_manager, SYMBOL
 import binance_client_wrapper
 
-# MODIFIÉ: Importer les utilitaires d'ordre
-from utils.order_utils import format_quantity
+# MODIFIÉ: Importer les handlers pour appeler execute_exit et cancel_scalping_order
 import websocket_handlers
 from websocket_utils import broadcast_state_update
 
@@ -28,132 +27,10 @@ logger = logging.getLogger(__name__)
 
 KEEPALIVE_INTERVAL_SECONDS = 30 * 60
 
-# --- Fonctions Helper pour Logique Sortie ---
+# --- Fonctions Helper pour Logique Sortie (Supprimées car centralisées dans websocket_handlers) ---
+# _calculate_exit_quantity, _place_exit_order, _handle_exit_order_result sont supprimées.
 
-
-def _calculate_exit_quantity(
-    reason: str,
-) -> Optional[Tuple[float, str, Dict[str, Any]]]:
-    """Vérifie si en position et retourne quantité formatée, symbole, et détails entrée."""
-    current_state = state_manager.get_state()
-    if not current_state.get("in_position"):
-        logger.debug(f"execute_exit ({reason}): Ignored, not in position.")
-        return None
-
-    entry_details = current_state.get("entry_details")
-    symbol_to_exit = current_state.get("symbol", SYMBOL)
-    # Utiliser la quantité des détails d'entrée si dispo, sinon la quantité en état
-    qty_to_sell_raw = (
-        entry_details.get("quantity") if entry_details else None
-    ) or current_state.get("symbol_quantity", 0.0)
-
-    try:
-        qty_to_sell_float = float(qty_to_sell_raw)
-        if qty_to_sell_float <= 0:
-            logger.error(f"execute_exit: Invalid quantity to sell ({qty_to_sell_raw}).")
-            return None
-    except (ValueError, TypeError):
-        logger.error(f"execute_exit: Non-numeric quantity ({qty_to_sell_raw}).")
-        return None
-
-    symbol_info = state_manager.get_symbol_info()  # Essayer cache d'abord
-    if not symbol_info:
-        symbol_info = binance_client_wrapper.get_symbol_info(symbol_to_exit)
-    if not symbol_info:
-        logger.error(f"execute_exit: Cannot get symbol_info for {symbol_to_exit}.")
-        return None
-
-    # Utiliser l'utilitaire importé
-    formatted_qty_to_sell = format_quantity(qty_to_sell_float, symbol_info)
-    if formatted_qty_to_sell <= 0:
-        logger.error(
-            f"execute_exit: Invalid formatted quantity ({formatted_qty_to_sell} from {qty_to_sell_float})."
-        )
-        return None
-
-    entry_details_copy = entry_details.copy() if entry_details else {}
-    return formatted_qty_to_sell, symbol_to_exit, entry_details_copy
-
-
-def _place_exit_order(
-    symbol: str, quantity: float, config: Dict[str, Any]
-) -> Optional[Dict[str, Any]]:
-    """Place l'ordre de sortie MARKET."""
-    # Simplifié pour toujours utiliser MARKET pour la sortie
-    exit_order_type = "MARKET"
-    logger.info(
-        f"execute_exit: Attempting {exit_order_type} sell of {quantity} {symbol}..."
-    )
-    try:
-        order_details = binance_client_wrapper.place_order(
-            symbol=symbol, side="SELL", quantity=quantity, order_type=exit_order_type
-        )
-        return order_details
-    except Exception as e:
-        logger.error(
-            f"execute_exit: Error placing {exit_order_type} exit order: {e}",
-            exc_info=True,
-        )
-        return None
-
-
-def _handle_exit_order_result(order_details: Optional[Dict[str, Any]]):
-    """Gère le résultat de l'ordre de sortie (logique simplifiée, WS gère l'état)."""
-    if not order_details:
-        logger.error(
-            "execute_exit: Failed to place SELL order (order_details is None)."
-        )
-        # L'état reste 'in_position' jusqu'à confirmation WS ou erreur
-        return
-
-    order_id = order_details.get("orderId", "N/A")
-    status = order_details.get("status")
-    logger.info(f"execute_exit: Result for SELL order {order_id}: Status={status}")
-
-    # La mise à jour de l'état (in_position=False) est gérée par _handle_execution_report
-    # suite au message WebSocket, ce qui est plus fiable que la réponse REST immédiate.
-    # On peut mettre un état intermédiaire si besoin.
-    if status not in ["FILLED", "PARTIALLY_FILLED", "NEW"]:  # Si échec immédiat
-        logger.warning(
-            f"execute_exit: SELL order {order_id} failed/rejected immediately (Status={status}). State 'in_position' remains True."
-        )
-        # Revenir à RUNNING si on était en EXITING
-        if state_manager.get_state("status") == "EXITING":
-            # --- CORRECTION ICI ---
-            state_manager.update_state({"status": "RUNNING"})
-            # --- FIN CORRECTION ---
-            broadcast_state_update()
-
-
-def execute_exit(reason: str) -> Optional[Dict[str, Any]]:
-    """Fonction principale pour exécuter une sortie de position."""
-    exit_info = _calculate_exit_quantity(reason)
-    if not exit_info:
-        return None
-
-    quantity_to_sell, symbol, _ = exit_info  # entry_details_copy non utilisé ici
-    current_config = config_manager.get_config()
-
-    order_details = _place_exit_order(symbol, quantity_to_sell, current_config)
-    _handle_exit_order_result(order_details)  # Gère log/état intermédiaire
-
-    # Rafraîchir l'historique après la tentative de placement
-    if order_details and order_details.get("symbol"):
-        logger.debug(
-            f"execute_exit: Triggering history refresh for {order_details['symbol']} via REST..."
-        )
-        threading.Thread(
-            target=refresh_order_history_via_rest,
-            args=(order_details["symbol"], 50),
-            daemon=True,
-        ).start()
-
-    return order_details
-
-
-# --- Fonctions Ordres Stratégie (Appelées par Handlers) ---
-# Note: execute_entry est maintenant dans websocket_handlers
-
+# --- Fonctions Ordres Stratégie (Appelées par Handlers ou API) ---
 
 def cancel_scalping_order(symbol: str, order_id: int):
     """Annule un ordre LIMIT ouvert."""
@@ -176,7 +53,6 @@ def cancel_scalping_order(symbol: str, order_id: int):
 
 
 # --- Thread Principal Bot ---
-
 
 def run_bot():
     """Thread principal (simplifié, la logique est dans les handlers WS)."""
@@ -208,7 +84,6 @@ def run_bot():
 
 
 # --- Thread Keepalive ---
-
 
 def run_keepalive():
     """Thread pour renouveler le listenKey."""
@@ -274,7 +149,6 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 50
 
 # --- Fonctions Contrôle (Orchestration Démarrage/Arrêt) ---
 
-
 def _initialize_client_and_config() -> bool:
     """Initialise client Binance et charge config."""
     logger.info("Start Core: Initializing Binance Client...")
@@ -316,12 +190,16 @@ def _load_and_prepare_state() -> bool:
     initial_quote = binance_client_wrapper.get_account_balance(asset=quote_asset)
     initial_base = binance_client_wrapper.get_account_balance(asset=base_asset)
 
+    # Utiliser Decimal pour les balances récupérées
+    initial_quote_decimal = initial_quote if initial_quote is not None else Decimal("0.0")
+    initial_base_decimal = initial_base if initial_base is not None else Decimal("0.0")
+
     state_updates = {
         "symbol": current_symbol,
         "base_asset": base_asset,
         "quote_asset": quote_asset,
-        "available_balance": float(initial_quote or 0.0),
-        "symbol_quantity": float(initial_base or 0.0),
+        "available_balance": initial_quote_decimal,
+        "symbol_quantity": initial_base_decimal,
     }
 
     # Vérification cohérence position/quantité
@@ -332,15 +210,18 @@ def _load_and_prepare_state() -> bool:
     final_in_position = loaded_in_position
     final_entry_details = loaded_entry_details
 
-    if loaded_in_position and fetched_base_qty <= 0:
+    # Utiliser une petite tolérance pour la quantité base
+    base_qty_tolerance = Decimal("1e-12")
+
+    if loaded_in_position and fetched_base_qty <= base_qty_tolerance:
         logger.warning(
-            "Start Core: Consistency Check - In position but base qty <= 0. Forcing OUT."
+            f"Start Core: Consistency Check - In position but base qty ({fetched_base_qty}) <= tolerance. Forcing OUT."
         )
         final_in_position = False
         final_entry_details = None
-    elif not loaded_in_position and fetched_base_qty > 0:
+    elif not loaded_in_position and fetched_base_qty > base_qty_tolerance:
         logger.warning(
-            f"Start Core: Consistency Check - NOT in position but base qty {fetched_base_qty} > 0. Keeping OUT."
+            f"Start Core: Consistency Check - NOT in position but base qty ({fetched_base_qty}) > tolerance. Keeping OUT."
         )
         final_in_position = False
         final_entry_details = None
@@ -362,67 +243,43 @@ def _load_and_prepare_state() -> bool:
 
 
 def _prefetch_kline_history() -> bool:
-    """Précharge historique klines pour SWING."""
+    """Précharge historique klines pour SWING ou SCALPING2."""
     strategy_type = config_manager.get_value("STRATEGY_TYPE")
-    if strategy_type != "SWING":
+    if strategy_type not in ["SWING", "SCALPING2"]:
         logger.info(f"Start Core ({strategy_type}): Kline prefetch skipped.")
         state_manager.clear_kline_history()
         return True
 
-    current_tf = config_manager.get_value("TIMEFRAME_STR", "1m")
+    current_tf = config_manager.get_value("TIMEFRAME", "1m") # Utiliser TIMEFRAME
     required_limit = state_manager.get_required_klines()
     symbol = state_manager.get_state("symbol")
 
     logger.info(
-        f"Start Core (SWING): Prefetching {required_limit} klines ({symbol} {current_tf})..."
+        f"Start Core ({strategy_type}): Prefetching {required_limit} klines ({symbol} {current_tf})..."
     )
     initial_klines = binance_client_wrapper.get_klines(
         symbol=symbol, interval=current_tf, limit=required_limit
     )
 
-    if initial_klines:
+    if initial_klines and len(initial_klines) >= required_limit:
         state_manager.resize_kline_history(required_limit)
         state_manager.replace_kline_history(initial_klines)
         logger.info(
-            f"Start Core (SWING): Kline history prefetched ({len(initial_klines)})."
+            f"Start Core ({strategy_type}): Kline history prefetched ({len(initial_klines)})."
         )
         return True
+    elif initial_klines:
+         logger.warning(f"Start Core ({strategy_type}): Prefetched only {len(initial_klines)}/{required_limit} klines. Might be insufficient.")
+         state_manager.resize_kline_history(required_limit)
+         state_manager.replace_kline_history(initial_klines)
+         return True # Continuer mais avec un avertissement
     else:
-        logger.error(f"Start Core (SWING): Failed to prefetch klines.")
+        logger.error(f"Start Core ({strategy_type}): Failed to prefetch klines.")
         state_manager.clear_kline_history()
-        return False  # Échec critique pour SWING
+        return False # Échec critique
 
 
-def _prefetch_kline_history_scalping2() -> bool:
-    """Précharge historique klines pour SCALPING2."""
-    strategy_type = config_manager.get_value("STRATEGY_TYPE")
-    if strategy_type != "SCALPING2":
-        logger.info(f"Start Core ({strategy_type}): Kline prefetch SCALPING2 skipped.")
-        state_manager.clear_kline_history()
-        return True
-
-    current_tf = config_manager.get_value("TIMEFRAME_STR", "1m")
-    required_limit = max(20, 22)  # 20 minimum pour indicateurs, 22 pour marge
-    symbol = state_manager.get_state("symbol")
-
-    logger.info(
-        f"Start Core (SCALPING2): Prefetching {required_limit} klines ({symbol} {current_tf})..."
-    )
-    initial_klines = binance_client_wrapper.get_klines(
-        symbol=symbol, interval=current_tf, limit=required_limit
-    )
-
-    if initial_klines:
-        state_manager.resize_kline_history(required_limit)
-        state_manager.replace_kline_history(initial_klines)
-        logger.info(
-            f"Start Core (SCALPING2): Kline history prefetched ({len(initial_klines)})."
-        )
-        return True
-    else:
-        logger.error(f"Start Core (SCALPING2): Failed to prefetch klines.")
-        state_manager.clear_kline_history()
-        return False
+# --- Suppression de _prefetch_kline_history_scalping2 (fusionné dans _prefetch_kline_history) ---
 
 
 def _start_main_thread() -> bool:
@@ -478,7 +335,6 @@ def _stop_main_thread(timeout: int = 5) -> bool:
 
 
 # --- Gestion WebSocket ---
-
 
 def _handle_websocket_message(ws_client_instance, raw_msg: str):
     """Callback central pour messages WebSocket combinés."""
@@ -582,17 +438,18 @@ def _start_websockets() -> bool:
         if not current_symbol:
             raise ValueError("Symbol missing in state.")
 
+        # CORRECTION: Fournir l'URL de base, la bibliothèque ajoute /stream pour is_combined=True
         ws_stream_url = (
-            "wss://testnet.binance.vision"
+            "wss://testnet.binance.vision" # URL de base Testnet
             if use_testnet
-            else "wss://stream.binance.com:9443"
-        )
+            else "wss://stream.binance.com:9443" # URL de base Production (garder le port)
+        )   
         ws_client = SpotWebsocketStreamClient(
             stream_url=ws_stream_url,
             on_message=_handle_websocket_message,
             on_close=lambda *args: logger.info("WebSocket Client: Connection closed."),
             on_error=lambda _, e: logger.error(f"WebSocket Client: Error: {e}"),
-            is_combined=True,
+            is_combined=True, # Important pour l'URL /stream
         )
         state_manager.update_state({"websocket_client": ws_client})
         logger.info(f"WebSocket Client created (URL: {ws_stream_url})")
@@ -622,18 +479,11 @@ def _start_websockets() -> bool:
             )
             logger.info("Start Core (SCALPING): Added bookTicker, depth streams.")
 
-        elif strategy_type == "SCALPING2":
+        elif strategy_type in ["SCALPING2", "SWING"]:
             current_tf = state_manager.get_state("timeframe")
             streams_to_subscribe.append(f"{stream_symbol_lower}@kline_{current_tf}")
             logger.info(
-                f"Start Core (SCALPING2): Added bookTicker, kline_{current_tf} streams."
-            )
-
-        elif strategy_type == "SWING":
-            current_tf = state_manager.get_state("timeframe")
-            streams_to_subscribe.append(f"{stream_symbol_lower}@kline_{current_tf}")
-            logger.info(
-                f"Start Core (SWING): Added bookTicker, kline_{current_tf} streams."
+                f"Start Core ({strategy_type}): Added bookTicker, kline_{current_tf} streams."
             )
 
         # 3. Souscription
@@ -702,6 +552,11 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
     if ws_client:
         logger.info(f"{log_prefix} Stopping WebSocket Client...")
         try:
+            # Tenter de se désabonner avant d'arrêter (best effort)
+            listen_key = state_manager.get_state("listen_key")
+            if listen_key:
+                 try: ws_client.unsubscribe(stream=[listen_key], id=99)
+                 except Exception as unsub_e: logger.warning(f"Error unsubscribing listen key: {unsub_e}")
             ws_client.stop()
             time.sleep(0.5)
             logger.info(f"{log_prefix} WebSocket Client stop initiated.")
@@ -717,7 +572,6 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
 
 
 # --- Fonctions Contrôle Publiques ---
-
 
 def start_bot_core() -> tuple[bool, str]:
     """Fonction principale pour démarrer le bot."""
@@ -737,20 +591,10 @@ def start_bot_core() -> tuple[bool, str]:
         return False, "Échec initialisation client/config."
     if not _load_and_prepare_state():
         return False, "Échec chargement état/données initiales."
-    # --- Ajout SCALPING2 ---
-    if config_manager.get_value("STRATEGY_TYPE") == "SCALPING2":
-        if not _prefetch_kline_history_scalping2():
-            state_manager.update_state({"status": "ERROR"})
-            broadcast_state_update()
-            return False, "Échec préchargement Klines (requis pour SCALPING2)."
-    elif config_manager.get_value("STRATEGY_TYPE") == "SWING":
-        if (
-            not _prefetch_kline_history()
-            and config_manager.get_value("STRATEGY_TYPE") == "SWING"
-        ):
-            state_manager.update_state({"status": "ERROR"})
-            broadcast_state_update()
-            return False, "Échec préchargement Klines (requis pour SWING)."
+    if not _prefetch_kline_history(): # Gère SWING et SCALPING2
+        state_manager.update_state({"status": "ERROR"})
+        broadcast_state_update()
+        return False, "Échec préchargement Klines (requis pour SWING/SCALPING2)."
     if not _start_websockets():
         return False, "Échec démarrage WebSockets."
     if not _start_main_thread():
@@ -787,18 +631,22 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
     final_status = (
         "STOPPED" if not partial_cleanup else state_manager.get_state("status")
     )
-    state_manager.update_state(
-        {
-            "status": final_status,
-            "stop_main_requested": False,
-            "open_order_id": None,
-            "open_order_timestamp": None,
-            "listen_key": None,
-            "websocket_client": None,
-            "keepalive_thread": None,
-            "stop_keepalive_requested": False,
-        }
-    )
+    # Nettoyer l'état
+    state_updates_on_stop = {
+        "status": final_status,
+        "stop_main_requested": False,
+        "open_order_id": None,
+        "open_order_timestamp": None,
+        "listen_key": None,
+        "websocket_client": None,
+        "keepalive_thread": None,
+        "stop_keepalive_requested": False,
+        # Nettoyer aussi les clés temporaires
+        "_temp_entry_sl": None,
+        "_temp_entry_tp1": None,
+        "_temp_entry_tp2": None,
+    }
+    state_manager.update_state(state_updates_on_stop)
     broadcast_state_update()
 
     if not partial_cleanup:
@@ -811,7 +659,7 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
 
 # --- Exports ---
 __all__ = [
-    "execute_exit",
+    # "execute_exit", # Centralisé dans websocket_handlers
     "run_bot",
     "start_bot_core",
     "stop_bot_core",
