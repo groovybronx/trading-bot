@@ -48,12 +48,12 @@ SCALPING_IMBALANCE_THRESHOLD = 1.5 # Ex: Ratio Bid/Ask pour déséquilibre du ca
 SCALPING_MIN_TRADE_VOLUME = 0.1    # Ex: Volume minimum sur aggTrade pour confirmer momentum
 
 # --- Paramètres de Risque (Communs) ---
-RISK_PER_TRADE = 0.01
-CAPITAL_ALLOCATION = 0.05 # Utiliser 5% du capital pour ce bot/stratégie
+RISK_PER_TRADE = 1 # Risque par trade (en pourcentage du capital total)
+CAPITAL_ALLOCATION = 50 # Utiliser 5% du capital pour ce bot/stratégie
 
 # Niveaux Stop-Loss et Take-Profit (en pourcentage - peuvent être ajustés par la stratégie scalping)
-STOP_LOSS_PERCENTAGE = 0.005 # SL très serré pour scalping (0.5%)
-TAKE_PROFIT_PERCENTAGE = 0.01 # TP serré pour scalping (1%)
+STOP_LOSS_PERCENTAGE = 0.5 # SL très serré pour scalping (0.5%)
+TAKE_PROFIT_PERCENTAGE = 0.1 # TP serré pour scalping (1%)
 
 # --- Paramètres Ancienne Stratégie (EMA/RSI - Non utilisés si STRATEGY_TYPE='SCALPING') ---
 # NOTE: Gardés pour permettre le changement de stratégie via l'API, mais pourraient être supprimés si non nécessaire.

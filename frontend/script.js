@@ -284,6 +284,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (state.config) {
             strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
             updateParameterVisibility(strategySelector.value);
+            
+            // Convert decimals to percentages for display
+            const toPercent = (value) => value ? (value * 100).toString() : '';
 
             // SWING Params
             paramTimeframe.value = state.config.TIMEFRAME_STR || '1m';
@@ -293,15 +296,15 @@ document.addEventListener('DOMContentLoaded', () => {
             paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
             paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
             paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
-            paramRisk.value = state.config.RISK_PER_TRADE ?? '';
-            paramCapitalAllocation.value = state.config.CAPITAL_ALLOCATION ?? '';
+            paramRisk.value = toPercent(state.config.RISK_PER_TRADE);
+            paramCapitalAllocation.value = toPercent(state.config.CAPITAL_ALLOCATION);
             paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
             paramUseEmaFilter.checked = state.config.USE_EMA_FILTER || false;
             paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION || false;
 
             // SCALPING Params
-            paramSl.value = state.config.STOP_LOSS_PERCENTAGE ?? '';
-            paramTp.value = state.config.TAKE_PROFIT_PERCENTAGE ?? '';
+            paramSl.value = toPercent(state.config.STOP_LOSS_PERCENTAGE);
+            paramTp.value = toPercent(state.config.TAKE_PROFIT_PERCENTAGE);
             paramLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
         } else {
             console.warn("State received without config object. Cannot update parameters.");
@@ -448,6 +451,9 @@ document.addEventListener('DOMContentLoaded', () => {
         paramSaveStatus.className = 'status-saving';
         saveParamsBtn.disabled = true;
 
+        // Convert percentages to decimal values
+        const toDecimal = (value) => value ? parseFloat(value) / 100 : null;
+
         const paramsToSend = {
             STRATEGY_TYPE: strategySelector.value,
             TIMEFRAME_STR: paramTimeframe.value,
@@ -457,13 +463,13 @@ document.addEventListener('DOMContentLoaded', () => {
             RSI_PERIOD: parseInt(paramRsiPeriod.value) || null,
             RSI_OVERBOUGHT: parseInt(paramRsiOb.value) || null,
             RSI_OVERSOLD: parseInt(paramRsiOs.value) || null,
-            RISK_PER_TRADE: parseFloat(paramRisk.value) || null,
-            CAPITAL_ALLOCATION: parseFloat(paramCapitalAllocation.value) || null,
+            RISK_PER_TRADE: toDecimal(paramRisk.value),
+            CAPITAL_ALLOCATION: toDecimal(paramCapitalAllocation.value),
             VOLUME_AVG_PERIOD: parseInt(paramVolumeAvg.value) || null,
             USE_EMA_FILTER: paramUseEmaFilter.checked,
             USE_VOLUME_CONFIRMATION: paramUseVolume.checked,
-            STOP_LOSS_PERCENTAGE: parseFloat(paramSl.value) || null,
-            TAKE_PROFIT_PERCENTAGE: parseFloat(paramTp.value) || null,
+            STOP_LOSS_PERCENTAGE: toDecimal(paramSl.value),
+            TAKE_PROFIT_PERCENTAGE: toDecimal(paramTp.value),
             SCALPING_LIMIT_ORDER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
         };
 

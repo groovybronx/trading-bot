@@ -47,7 +47,8 @@ def setup_logging(log_queue, ws_log_handler): # Accepter le handler en argument
     formatter = logging.Formatter(log_format)
 
     logging.basicConfig(level=log_level, format=log_format)
-
+    
+    logging.getLogger('binance.websocket.websocket_client').setLevel(logging.INFO)
     # --- Configuration du logging vers la queue (pour WebSocket) ---
     queue_handler = QueueHandler(log_queue)
     # queue_handler.setLevel(logging.DEBUG) # Niveau pour les websockets

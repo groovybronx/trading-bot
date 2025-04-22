@@ -1,14 +1,12 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/websocket_utils.py
 import logging
 import json
-
-# REMOVED imports from top:
-# from state_manager import state_manager
-# from config_manager import config_manager
+import asyncio # Keep asyncio import in case needed elsewhere, though not directly used in sync broadcast
+from typing import Dict, Any, Set
 
 logger = logging.getLogger(__name__)
 
-connected_clients = set()
+connected_clients: Set = set() # Assuming this set holds the WebSocket client objects
 
 def broadcast_message(message_dict: dict):
     """Envoie un message JSON à tous les clients WebSocket connectés."""
@@ -16,19 +14,25 @@ def broadcast_message(message_dict: dict):
         return
 
     try:
-        #logger.debug(f"Attempting to JSON dump: {message_dict}")
-        # default=str handles non-serializable types like Decimal or datetime if they appear
+        # default=str handles non-serializable types like Decimal
         message_json = json.dumps(message_dict, default=str)
-        # Create a copy to iterate over, allowing modification of the original set
+        # Create a copy to iterate over safely if the set might change
         clients_to_send = list(connected_clients)
         disconnected_clients = set()
 
         for ws in clients_to_send:
             try:
+                # Assuming ws.send is thread-safe or handled correctly by the WS library (e.g., Flask-Sock, gevent-websocket)
                 ws.send(message_json)
             except Exception as e:
                 # Log specific error and mark client for removal
-                logger.warning(f"Erreur envoi WS broadcast vers {ws.environ.get('REMOTE_ADDR', '?')}: {e}. Client marqué pour suppression.")
+                # Getting remote address might fail if connection is already broken
+                remote_addr = "?"
+                try:
+                    # Accessing environ might depend on the specific WebSocket library implementation
+                    remote_addr = ws.environ.get('REMOTE_ADDR', '?') if hasattr(ws, 'environ') else '?'
+                except: pass # Ignore errors getting address
+                logger.warning(f"Erreur envoi WS broadcast vers {remote_addr}: {e}. Client marqué pour suppression.")
                 disconnected_clients.add(ws)
 
         # Remove disconnected clients outside the loop
@@ -36,9 +40,7 @@ def broadcast_message(message_dict: dict):
             for ws in disconnected_clients:
                 if ws in connected_clients:
                     connected_clients.remove(ws)
-            # Update the handler's client list if it's being used directly elsewhere
-            # (Assuming ws_log_handler is accessible or managed globally/contextually if needed)
-            # Example: logging_config.ws_log_handler.clients = connected_clients
+            logger.info(f"Removed {len(disconnected_clients)} disconnected client(s).")
 
     except TypeError as e:
         logger.error(f"Erreur de sérialisation JSON lors du broadcast WS: {e} - Data: {message_dict}", exc_info=True)
@@ -47,43 +49,59 @@ def broadcast_message(message_dict: dict):
 
 
 def broadcast_state_update():
-    """Récupère l'état actuel et le diffuse."""
-    # --- MOVED IMPORTS HERE ---
+    """Récupère l'état actuel complet et le diffuse."""
+    # Imports locaux pour éviter dépendances circulaires au chargement
     from state_manager import state_manager
     from config_manager import config_manager
-    # --- END MOVED IMPORTS ---
     try:
         current_state = state_manager.get_state()
-
-        # Exclude non-serializable or internal objects
-        excluded_keys = {'main_thread', 'websocket_client', 'order_history', 'kline_history', 'keepalive_thread'}
+        excluded_keys = {'main_thread', 'websocket_client', 'keepalive_thread'} # Exclure objets non sérialisables/internes
         state_serializable = {k: v for k, v in current_state.items() if k not in excluded_keys}
 
-        # Add relevant computed/related data
+        # Ajouter des données potentiellement utiles non stockées directement dans l'état principal
         state_serializable["config"] = config_manager.get_config()
         state_serializable["latest_book_ticker"] = state_manager.get_book_ticker()
+        state_serializable["order_history"] = state_manager.get_order_history() # Inclure l'historique
 
+        logger.debug("Broadcasting full state update...")
         broadcast_message({"type": "status_update", "state": state_serializable})
     except Exception as e:
         logger.error(f"Erreur dans broadcast_state_update: {e}", exc_info=True)
 
 def broadcast_order_history_update():
     """Récupère l'historique des ordres et le diffuse."""
-    # --- MOVED IMPORT HERE ---
+    # Import local
     from state_manager import state_manager
-    # --- END MOVED IMPORT ---
     try:
         history = state_manager.get_order_history()
+        logger.info("Broadcasting order history update...")
         broadcast_message({"type": "order_history_update", "history": history})
-        # Keep INFO level for this as it's a significant event
-        logger.info("Broadcast order history update envoyé.")
     except Exception as e:
         logger.error(f"Erreur dans broadcast_order_history_update: {e}", exc_info=True)
 
+# --- AJOUT DE LA FONCTION MANQUANTE ---
+def broadcast_ticker_update(ticker_data: Dict[str, Any]):
+    """Diffuse uniquement les données du ticker aux clients."""
+    # logger.debug(f"Broadcasting Ticker Update for {ticker_data.get('s')}") # Verbeux
+    try:
+        # Appel direct car broadcast_message est synchrone dans cet exemple
+        broadcast_message({
+            "type": "ticker_update", # Type spécifique pour le frontend
+            "ticker": ticker_data
+        })
+    except Exception as e:
+        # Logguer toute erreur inattendue pendant le broadcast du ticker
+        logger.error(f"Erreur dans broadcast_ticker_update: {e}", exc_info=True)
+# --- FIN AJOUT ---
+
+
 # --- Exports ---
+# MODIFIÉ: Ajout de broadcast_ticker_update à __all__
 __all__ = [
     'connected_clients',
     'broadcast_message',
     'broadcast_state_update',
-    'broadcast_order_history_update'
+    'broadcast_order_history_update',
+    'broadcast_ticker_update' # Export de la nouvelle fonction
 ]
+# --- FIN MODIFIÉ ---

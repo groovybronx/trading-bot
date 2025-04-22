@@ -231,7 +231,7 @@ td.side-sell {
 
 /* Styles pour les statuts d'ordre */
 .status-filled {
-    /* background-color: #e6ffed; */ /* Vert léger */
+     background-color: #e6ffed; 
 }
 .status-canceled, .status-rejected, .status-expired {
      color: #999;
@@ -239,5 +239,5 @@ td.side-sell {
      /* background-color: #ffebeb; */ /* Rouge léger */
 }
 .status-new, .status-partially_filled {
-     /* background-color: #e6f7ff; */ /* Bleu léger */
+      background-color: #e6f7ff;
 }
