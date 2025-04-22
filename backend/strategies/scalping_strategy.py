@@ -22,7 +22,6 @@ def check_entry_conditions(
     Retourne les détails de l'ordre à placer si les conditions sont remplies, sinon None.
     """
     if not book_ticker or not depth or not depth.get("bids") or not depth.get("asks"):
-        # logger.debug("SCALPING Entry Check: Données temps réel manquantes.") # Commenté
         return None
 
     try:
@@ -39,8 +38,6 @@ def check_entry_conditions(
 
         best_bid_price = Decimal(best_bid_price_str or "0")
         best_ask_price = Decimal(best_ask_price_str or "0")
-        # best_bid_qty = Decimal(best_bid_qty_str or '0') # Non utilisé dans l'exemple actuel
-        # best_ask_qty = Decimal(best_ask_qty_str or '0') # Non utilisé dans l'exemple actuel
 
         if best_bid_price <= 0 or best_ask_price <= 0:
             logger.warning(
@@ -102,74 +99,47 @@ def check_entry_conditions(
             exc_info=True,
         )
         return None
-    # --- Fin Logique Scalping ---
 
     if should_buy:
         try:
-            # Calculer le capital maximum utilisable
+            # Calculer le capital maximum utilisable avec allocation
             capital_allocation = Decimal(
                 str(current_config.get("CAPITAL_ALLOCATION", 50.0))
             ) / Decimal("100.0")
             capital_to_use = Decimal(str(available_balance)) * capital_allocation
+            capital_to_use = capital_to_use * Decimal("0.95")  # Marge de sécurité 5%
 
-            # Ajouter une marge de sécurité
-            capital_to_use = capital_to_use * Decimal(
-                "0.95"
-            )  # Utiliser 95% du capital alloué
-
-            # Obtenir le prix d'entrée d'abord
             entry_price_decimal = best_ask_price
-
-            # Calculer la quantité avec le capital ajusté
-            max_quantity = capital_to_use / entry_price_decimal
-
             min_notional = Decimal(str(get_min_notional(symbol_info)))
 
-            # Formater la quantité selon les règles du symbole
-            formatted_quantity = format_quantity(float(max_quantity), symbol_info)
+            # Assurer un notionnel minimum de 11 USDT (ou min_notional + 10%)
+            min_order_value = max(Decimal("11.0"), min_notional * Decimal("1.1"))
 
-            # Vérifier si la quantité est valide
+            # Calculer la quantité basée sur le notionnel minimum
+            min_quantity = min_order_value / entry_price_decimal
+
+            # Calculer la quantité maximale basée sur le capital disponible
+            max_quantity = capital_to_use / entry_price_decimal
+
+            # Utiliser la plus petite des deux quantités
+            quantity_to_use = min(max_quantity, min_quantity)
+
+            # Formater la quantité selon les règles du symbole
+            formatted_quantity = format_quantity(float(quantity_to_use), symbol_info)
+
             if formatted_quantity <= 0:
                 logger.warning(
-                    f"SCALPING Entry: Quantité calculée ({max_quantity:.8f}) invalide ou nulle après formatage."
+                    f"SCALPING Entry: Quantité calculée ({quantity_to_use:.8f}) invalide après formatage."
                 )
                 return None
 
-            # Calculer le notionnel de l'ordre
-            order_notional = Decimal(str(formatted_quantity)) * entry_price_decimal
-
-            # Vérifier le MIN_NOTIONAL
-            if order_notional < min_notional:
+            # Vérifier le notionnel final
+            final_notional = Decimal(str(formatted_quantity)) * entry_price_decimal
+            if final_notional < min_notional:
                 logger.warning(
-                    f"SCALPING Entry: Notionnel calculé ({order_notional:.4f}) < MIN_NOTIONAL ({min_notional:.4f}). Ordre annulé."
+                    f"SCALPING Entry: Notionnel final ({final_notional:.4f}) < MIN_NOTIONAL ({min_notional:.4f})"
                 )
                 return None
-
-            # Vérifier que le notionnel ne dépasse pas le capital alloué
-            if order_notional > capital_to_use:
-                # Recalculer la quantité pour respecter le capital alloué
-                adjusted_quantity = (
-                    capital_to_use * Decimal("0.99")
-                ) / entry_price_decimal  # 99% pour marge de sécurité
-                formatted_quantity = format_quantity(
-                    float(adjusted_quantity), symbol_info
-                )
-
-                if formatted_quantity <= 0:
-                    logger.error(
-                        f"SCALPING Entry: Impossible d'ajuster la quantité pour respecter le capital alloué."
-                    )
-                    return None
-
-                # Vérifier à nouveau le MIN_NOTIONAL avec la quantité ajustée
-                adjusted_notional = (
-                    Decimal(str(formatted_quantity)) * entry_price_decimal
-                )
-                if adjusted_notional < min_notional:
-                    logger.warning(
-                        f"SCALPING Entry: Notionnel ajusté ({adjusted_notional:.4f}) < MIN_NOTIONAL ({min_notional:.4f}). Ordre annulé."
-                    )
-                    return None
 
             # Préparer les paramètres de l'ordre
             order_params = {

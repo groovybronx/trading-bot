@@ -104,8 +104,7 @@ class ConfigManager:
         return config_dict
 
     def get_config(self) -> Dict[str, Any]:
-        """Retourne une copie de la configuration interne (avec fractions)."""
-        # Retourne une copie pour éviter la modification externe
+        """Retourne une copie de la configuration interne (fractions, sans conversion %)."""
         return self._config.copy()
 
     def get_value(self, key: str, default: Any = None) -> Any:
@@ -134,7 +133,6 @@ class ConfigManager:
                     "RISK_PER_TRADE",
                     "CAPITAL_ALLOCATION",
                     "STOP_LOSS_PERCENTAGE",
-                    "TAKE_PROFIT_PERCENTAGE",
                 ]
                 and value is not None
             ):
@@ -204,12 +202,10 @@ class ConfigManager:
                 "USE_TESTNET",
                 "SYMBOL",
             ]:
-                validated_config_fractions[key] = params_in_percent.get(
-                    key
-                )  # Doivent être présents depuis _load_initial_config
+                validated_config_fractions[key] = params_in_percent.get(key)
 
             # --- Timeframe ---
-            new_tf = str(params_in_percent.get("TIMEFRAME_STR", "1m"))  # Default '1m'
+            new_tf = str(params_in_percent.get("TIMEFRAME_STR", "1m"))
             if new_tf not in VALID_TIMEFRAMES:
                 raise ValueError(f"TIMEFRAME_STR invalide: {new_tf}")
             validated_config_fractions["TIMEFRAME_STR"] = new_tf
@@ -249,14 +245,12 @@ class ConfigManager:
             if sl_pct_in is not None and str(sl_pct_in).strip() != "":
                 try:
                     sl_pct = Decimal(str(sl_pct_in))
-                    # Modification ici : on ne divise plus par 100 car la valeur est déjà en pourcentage
-                    if not (Decimal("0.01") <= sl_pct <= Decimal("50")):
+                    # Les valeurs sont déjà en pourcentage décimal (0.005 = 0.5%)
+                    if not (Decimal("0.001") <= sl_pct <= Decimal("0.05")):
                         raise ValueError(
                             "STOP_LOSS_PERCENTAGE doit être entre 0.1% et 5%"
                         )
-                    validated_config_fractions["STOP_LOSS_PERCENTAGE"] = float(
-                        sl_pct / Decimal(100)
-                    )
+                    validated_config_fractions["STOP_LOSS_PERCENTAGE"] = float(sl_pct)
                 except InvalidOperation:
                     raise ValueError("STOP_LOSS_PERCENTAGE doit être un nombre.")
             else:
@@ -269,27 +263,97 @@ class ConfigManager:
             if tp_pct_in is not None and str(tp_pct_in).strip() != "":
                 try:
                     tp_pct = Decimal(str(tp_pct_in))
-                    # Modification ici : on ne divise plus par 100 car la valeur est déjà en pourcentage
-                    if not (Decimal("0.01") <= tp_pct <= Decimal("50")):
+                    # Les valeurs sont déjà en pourcentage décimal
+                    if not (Decimal("0.001") <= tp_pct <= Decimal("0.05")):
                         raise ValueError(
                             "TAKE_PROFIT_PERCENTAGE doit être entre 0.1% et 5%"
                         )
-                    validated_config_fractions["TAKE_PROFIT_PERCENTAGE"] = float(
-                        tp_pct / Decimal(100)
-                    )
+                    validated_config_fractions["TAKE_PROFIT_PERCENTAGE"] = float(tp_pct)
                 except InvalidOperation:
                     raise ValueError("TAKE_PROFIT_PERCENTAGE doit être un nombre.")
             else:
                 validated_config_fractions["TAKE_PROFIT_PERCENTAGE"] = (
-                    0.001  # Valeur par défaut 0.1%
+                    0.002  # Valeur par défaut 0.1%
                 )
+
+            # --- Gestion des Sorties ---
+            # Stop Loss déjà validé ci-dessus
+
+            # --- Take Profit 1 (%) -> fraction or None ---
+            tp1_pct_in = params_in_percent.get("TAKE_PROFIT_1_PERCENTAGE")
+            if tp1_pct_in is not None and str(tp1_pct_in).strip() != "":
+                try:
+                    tp1_pct = Decimal(str(tp1_pct_in))
+                    # Les valeurs sont déjà en pourcentage décimal
+                    if not (Decimal("0.001") <= tp1_pct <= Decimal("0.05")):
+                        raise ValueError(
+                            "TAKE_PROFIT_1_PERCENTAGE doit être entre 0.1% et 5%"
+                        )
+                    validated_config_fractions["TAKE_PROFIT_1_PERCENTAGE"] = float(
+                        tp1_pct
+                    )
+                except InvalidOperation:
+                    raise ValueError("TAKE_PROFIT_1_PERCENTAGE doit être un nombre.")
+            else:
+                validated_config_fractions["TAKE_PROFIT_1_PERCENTAGE"] = (
+                    0.0075  # 0.75% par défaut
+                )
+
+            # --- Take Profit 2 (%) -> fraction or None ---
+            tp2_pct_in = params_in_percent.get("TAKE_PROFIT_2_PERCENTAGE")
+            if tp2_pct_in is not None and str(tp2_pct_in).strip() != "":
+                try:
+                    tp2_pct = Decimal(str(tp2_pct_in))
+                    # Les valeurs sont déjà en pourcentage décimal
+                    if not (Decimal("0.001") <= tp2_pct <= Decimal("0.05")):
+                        raise ValueError(
+                            "TAKE_PROFIT_2_PERCENTAGE doit être entre 0.1% et 5%"
+                        )
+                    validated_config_fractions["TAKE_PROFIT_2_PERCENTAGE"] = float(
+                        tp2_pct
+                    )
+                except InvalidOperation:
+                    raise ValueError("TAKE_PROFIT_2_PERCENTAGE doit être un nombre.")
+            else:
+                validated_config_fractions["TAKE_PROFIT_2_PERCENTAGE"] = (
+                    0.01  # 1% par défaut
+                )
+
+            # --- Trailing Stop (%) -> fraction ---
+            trailing_pct_in = params_in_percent.get("TRAILING_STOP_PERCENTAGE")
+            if trailing_pct_in is not None and str(trailing_pct_in).strip() != "":
+                try:
+                    trailing_pct = Decimal(str(trailing_pct_in))
+                    if not (Decimal("0.001") <= trailing_pct <= Decimal("0.05")):
+                        raise ValueError(
+                            "TRAILING_STOP_PERCENTAGE doit être entre 0.1% et 5%"
+                        )
+                    validated_config_fractions["TRAILING_STOP_PERCENTAGE"] = float(
+                        trailing_pct
+                    )
+                except InvalidOperation:
+                    raise ValueError("TRAILING_STOP_PERCENTAGE doit être un nombre.")
+            else:
+                validated_config_fractions["TRAILING_STOP_PERCENTAGE"] = (
+                    0.003  # 0.3% par défaut
+                )
+
+            # --- Time Stop ---
+            try:
+                validated_config_fractions["TIME_STOP_MINUTES"] = int(
+                    params_in_percent.get("TIME_STOP_MINUTES", 15)
+                )
+            except (ValueError, TypeError):
+                raise ValueError("TIME_STOP_MINUTES doit être un entier.")
+            if validated_config_fractions["TIME_STOP_MINUTES"] <= 0:
+                raise ValueError("TIME_STOP_MINUTES > 0")
 
             # --- Strategy Type ---
             new_strategy_type = str(
                 params_in_percent.get("STRATEGY_TYPE", "SWING")
-            ).upper()  # Default SWING
-            if new_strategy_type not in ["SCALPING", "SWING"]:
-                raise ValueError("STRATEGY_TYPE: 'SCALPING' ou 'SWING'.")
+            ).upper()
+            if new_strategy_type not in ["SCALPING", "SCALPING2", "SWING"]:
+                raise ValueError("STRATEGY_TYPE: 'SCALPING', 'SCALPING2' ou 'SWING'.")
             validated_config_fractions["STRATEGY_TYPE"] = new_strategy_type
             if not is_initial and new_strategy_type != current_strategy:
                 restart_recommended = True

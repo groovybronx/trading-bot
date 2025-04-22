@@ -48,8 +48,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // SCALPING Params
     const paramSl = document.getElementById('param-sl');
-    const paramTp = document.getElementById('param-tp');
-    const paramLimitTimeout = document.getElementById('param-limit-timeout');
+    const paramTp1 = document.getElementById('param-tp1');
+    const paramTp2 = document.getElementById('param-tp2');
+
+    // Scalping Advanced Params
+    const paramSupertrendAtr = document.getElementById('param-supertrend-atr');
+    const paramSupertrendMult = document.getElementById('param-supertrend-mult');
+    const paramRsiPeriodScalp = document.getElementById('param-rsi-period-scalp');
+    const paramStochK = document.getElementById('param-stoch-k');
+    const paramStochD = document.getElementById('param-stoch-d');
+    const paramStochSmooth = document.getElementById('param-stoch-smooth');
+    const paramBbPeriod = document.getElementById('param-bb-period');
+    const paramBbStd = document.getElementById('param-bb-std');
+    const paramTrailing = document.getElementById('param-trailing');
+    const paramTimeStop = document.getElementById('param-time-stop');
+    const paramVolMa = document.getElementById('param-vol-ma');
 
     let ws = null; // WebSocket connection
 
@@ -85,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateParameterVisibility(selectedStrategy) {
-        if (selectedStrategy === 'SCALPING') {
+        if (selectedStrategy === 'SCALPING' || selectedStrategy === 'SCALPING2') {
             swingParamsDiv.style.display = 'none';
             scalpingParamsDiv.style.display = 'block';
             paramTimeframe.disabled = true;
@@ -249,63 +262,78 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn("updateUI called with null or undefined state");
             return;
         }
-        // console.log("Updating UI with state:", state); // Keep commented unless debugging
 
-        // Update Bot Status section
-        statusValue.textContent = state.status || 'Inconnu';
-        statusValue.className = `status-${(state.status || 'unknown').toLowerCase()}`;
-        strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
-        symbolValue.textContent = state.symbol || 'N/A';
-        timeframeValue.textContent = state.timeframe || 'N/A';
-        quoteAssetLabel.textContent = state.quote_asset || 'USDT';
-        baseAssetLabel.textContent = state.base_asset || 'N/A';
-        symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
-        balanceValue.textContent = formatNumber(state.available_balance, 2);
-        quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
-
-        // Price update is now handled by updatePriceDisplay called from onmessage
+        // Update Bot Status section - only if elements exist
+        if (statusValue) statusValue.textContent = state.status || 'Inconnu';
+        if (statusValue) statusValue.className = `status-${(state.status || 'unknown').toLowerCase()}`;
+        if (strategyTypeValueSpan) strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
+        if (symbolValue) symbolValue.textContent = state.symbol || 'N/A';
+        if (timeframeValue) timeframeValue.textContent = state.timeframe || 'N/A';
+        if (quoteAssetLabel) quoteAssetLabel.textContent = state.quote_asset || 'USDT';
+        if (baseAssetLabel) baseAssetLabel.textContent = state.base_asset || 'N/A';
+        if (symbolPriceLabel) symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
+        if (balanceValue) balanceValue.textContent = formatNumber(state.available_balance, 2);
+        if (quantityValue) quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
 
         // Update Position Status
-        if (state.in_position && state.entry_details) {
-            const entryPrice = formatNumber(state.entry_details.avg_price, 2);
-            const entryQty = formatNumber(state.entry_details.quantity, 8);
-            positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
-            positionValue.className = 'status-running';
-        } else {
-            positionValue.textContent = 'Aucune';
-            positionValue.className = '';
+        if (positionValue) {
+            if (state.in_position && state.entry_details) {
+                const entryPrice = formatNumber(state.entry_details.avg_price, 2);
+                const entryQty = formatNumber(state.entry_details.quantity, 8);
+                positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
+                positionValue.className = 'status-running';
+            } else {
+                positionValue.textContent = 'Aucune';
+                positionValue.className = '';
+            }
         }
 
         // Update Control Buttons state
-        startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING';
-        stopBotBtn.disabled = state.status !== 'RUNNING';
+        if (startBotBtn) startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING';
+        if (stopBotBtn) stopBotBtn.disabled = state.status !== 'RUNNING';
 
         // Update Parameter Inputs
         if (state.config) {
-            strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
-            updateParameterVisibility(strategySelector.value);
-            
-            // Convert decimals to percentages for display
-            const toPercent = (value) => value ? (value * 100).toString() : '';
+            // Strategy selector and visibility
+            if (strategySelector) {
+                strategySelector.value = state.config.STRATEGY_TYPE || 'SWING';
+                updateParameterVisibility(strategySelector.value);
+            }
+
+            // Helper function to convert decimals to percentages
+            const toPercent = (value) => value !== null && value !== undefined ? (value * 100).toString() : '';
 
             // SWING Params
-            paramTimeframe.value = state.config.TIMEFRAME_STR || '1m';
-            paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
-            paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
-            paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
-            paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
-            paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
-            paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
-            paramRisk.value = toPercent(state.config.RISK_PER_TRADE);
-            paramCapitalAllocation.value = toPercent(state.config.CAPITAL_ALLOCATION);
-            paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
-            paramUseEmaFilter.checked = state.config.USE_EMA_FILTER || false;
-            paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION || false;
+            if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME_STR || '1m';
+            if (paramEmaShort) paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
+            if (paramEmaLong) paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
+            if (paramEmaFilter) paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
+            if (paramRsiPeriod) paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
+            if (paramRsiOb) paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
+            if (paramRsiOs) paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
+            if (paramRisk) paramRisk.value = toPercent(state.config.RISK_PER_TRADE);
+            if (paramCapitalAllocation) paramCapitalAllocation.value = toPercent(state.config.CAPITAL_ALLOCATION);
+            if (paramVolumeAvg) paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
+            if (paramUseEmaFilter) paramUseEmaFilter.checked = state.config.USE_EMA_FILTER ?? false;
+            if (paramUseVolume) paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION ?? false;
 
-            // SCALPING Params
-            paramSl.value = toPercent(state.config.STOP_LOSS_PERCENTAGE);
-            paramTp.value = toPercent(state.config.TAKE_PROFIT_PERCENTAGE);
-            paramLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
+            // Scalping Advanced Params
+            if (paramSupertrendAtr) paramSupertrendAtr.value = state.config.SUPERTREND_ATR_PERIOD ?? '3';
+            if (paramSupertrendMult) paramSupertrendMult.value = state.config.SUPERTREND_ATR_MULTIPLIER ?? '1.5';
+            if (paramRsiPeriodScalp) paramRsiPeriodScalp.value = state.config.SCALPING_RSI_PERIOD ?? '7';
+            if (paramStochK) paramStochK.value = state.config.STOCH_K_PERIOD ?? '14';
+            if (paramStochD) paramStochD.value = state.config.STOCH_D_PERIOD ?? '3';
+            if (paramStochSmooth) paramStochSmooth.value = state.config.STOCH_SMOOTH ?? '3';
+            if (paramBbPeriod) paramBbPeriod.value = state.config.BB_PERIOD ?? '20';
+            if (paramBbStd) paramBbStd.value = state.config.BB_STD ?? '2';
+
+            // Exit Parameters avec valeurs par défaut si la config est nulle
+            if (paramSl) paramSl.value = toPercent(state.config.STOP_LOSS_PERCENTAGE) || '0.5';
+            if (paramTp1) paramTp1.value = toPercent(state.config.TAKE_PROFIT_1_PERCENTAGE) || '0.75';
+            if (paramTp2) paramTp2.value = toPercent(state.config.TAKE_PROFIT_2_PERCENTAGE) || '1.0';
+            if (paramTrailing) paramTrailing.value = toPercent(state.config.TRAILING_STOP_PERCENTAGE) || '0.3';
+            if (paramTimeStop) paramTimeStop.value = state.config.TIME_STOP_MINUTES ?? '15';
+            if (paramVolMa) paramVolMa.value = state.config.VOLUME_MA_PERIOD ?? '20';
         } else {
             console.warn("State received without config object. Cannot update parameters.");
         }
@@ -457,6 +485,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const paramsToSend = {
             STRATEGY_TYPE: strategySelector.value,
             TIMEFRAME_STR: paramTimeframe.value,
+            
+            // SWING strategy params (existing)
             EMA_SHORT_PERIOD: parseInt(paramEmaShort.value) || null,
             EMA_LONG_PERIOD: parseInt(paramEmaLong.value) || null,
             EMA_FILTER_PERIOD: parseInt(paramEmaFilter.value) || null,
@@ -468,9 +498,22 @@ document.addEventListener('DOMContentLoaded', () => {
             VOLUME_AVG_PERIOD: parseInt(paramVolumeAvg.value) || null,
             USE_EMA_FILTER: paramUseEmaFilter.checked,
             USE_VOLUME_CONFIRMATION: paramUseVolume.checked,
+
+            // Advanced Scalping strategy params
+            SUPERTREND_ATR_PERIOD: parseInt(paramSupertrendAtr?.value) || 3,
+            SUPERTREND_ATR_MULTIPLIER: parseFloat(paramSupertrendMult?.value) || 1.5,
+            SCALPING_RSI_PERIOD: parseInt(paramRsiPeriodScalp?.value) || 7,
+            STOCH_K_PERIOD: parseInt(paramStochK?.value) || 14,
+            STOCH_D_PERIOD: parseInt(paramStochD?.value) || 3,
+            STOCH_SMOOTH: parseInt(paramStochSmooth?.value) || 3,
+            BB_PERIOD: parseInt(paramBbPeriod?.value) || 20,
+            BB_STD: parseFloat(paramBbStd?.value) || 2,
             STOP_LOSS_PERCENTAGE: toDecimal(paramSl.value),
-            TAKE_PROFIT_PERCENTAGE: toDecimal(paramTp.value),
-            SCALPING_LIMIT_ORDER_TIMEOUT_MS: parseInt(paramLimitTimeout.value) || null,
+            TAKE_PROFIT_1_PERCENTAGE: toDecimal(paramTp1?.value),
+            TAKE_PROFIT_2_PERCENTAGE: toDecimal(paramTp2?.value),
+            TRAILING_STOP_PERCENTAGE: toDecimal(paramTrailing?.value),
+            TIME_STOP_MINUTES: parseInt(paramTimeStop?.value) || 15,
+            VOLUME_MA_PERIOD: parseInt(paramVolMa?.value) || 20,
         };
 
         try {

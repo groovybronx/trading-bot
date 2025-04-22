@@ -18,6 +18,7 @@ from binance.error import ClientError, ServerError
 from state_manager import state_manager
 from config_manager import config_manager, SYMBOL
 import binance_client_wrapper
+
 # MODIFIÉ: Importer les utilitaires d'ordre
 from utils.order_utils import format_quantity
 import websocket_handlers
@@ -29,7 +30,10 @@ KEEPALIVE_INTERVAL_SECONDS = 30 * 60
 
 # --- Fonctions Helper pour Logique Sortie ---
 
-def _calculate_exit_quantity(reason: str) -> Optional[Tuple[float, str, Dict[str, Any]]]:
+
+def _calculate_exit_quantity(
+    reason: str,
+) -> Optional[Tuple[float, str, Dict[str, Any]]]:
     """Vérifie si en position et retourne quantité formatée, symbole, et détails entrée."""
     current_state = state_manager.get_state()
     if not current_state.get("in_position"):
@@ -39,7 +43,9 @@ def _calculate_exit_quantity(reason: str) -> Optional[Tuple[float, str, Dict[str
     entry_details = current_state.get("entry_details")
     symbol_to_exit = current_state.get("symbol", SYMBOL)
     # Utiliser la quantité des détails d'entrée si dispo, sinon la quantité en état
-    qty_to_sell_raw = (entry_details.get("quantity") if entry_details else None) or current_state.get("symbol_quantity", 0.0)
+    qty_to_sell_raw = (
+        entry_details.get("quantity") if entry_details else None
+    ) or current_state.get("symbol_quantity", 0.0)
 
     try:
         qty_to_sell_float = float(qty_to_sell_raw)
@@ -50,8 +56,9 @@ def _calculate_exit_quantity(reason: str) -> Optional[Tuple[float, str, Dict[str
         logger.error(f"execute_exit: Non-numeric quantity ({qty_to_sell_raw}).")
         return None
 
-    symbol_info = state_manager.get_symbol_info() # Essayer cache d'abord
-    if not symbol_info: symbol_info = binance_client_wrapper.get_symbol_info(symbol_to_exit)
+    symbol_info = state_manager.get_symbol_info()  # Essayer cache d'abord
+    if not symbol_info:
+        symbol_info = binance_client_wrapper.get_symbol_info(symbol_to_exit)
     if not symbol_info:
         logger.error(f"execute_exit: Cannot get symbol_info for {symbol_to_exit}.")
         return None
@@ -59,32 +66,43 @@ def _calculate_exit_quantity(reason: str) -> Optional[Tuple[float, str, Dict[str
     # Utiliser l'utilitaire importé
     formatted_qty_to_sell = format_quantity(qty_to_sell_float, symbol_info)
     if formatted_qty_to_sell <= 0:
-        logger.error(f"execute_exit: Invalid formatted quantity ({formatted_qty_to_sell} from {qty_to_sell_float}).")
+        logger.error(
+            f"execute_exit: Invalid formatted quantity ({formatted_qty_to_sell} from {qty_to_sell_float})."
+        )
         return None
 
     entry_details_copy = entry_details.copy() if entry_details else {}
     return formatted_qty_to_sell, symbol_to_exit, entry_details_copy
 
 
-def _place_exit_order(symbol: str, quantity: float, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _place_exit_order(
+    symbol: str, quantity: float, config: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     """Place l'ordre de sortie MARKET."""
     # Simplifié pour toujours utiliser MARKET pour la sortie
     exit_order_type = "MARKET"
-    logger.info(f"execute_exit: Attempting {exit_order_type} sell of {quantity} {symbol}...")
+    logger.info(
+        f"execute_exit: Attempting {exit_order_type} sell of {quantity} {symbol}..."
+    )
     try:
         order_details = binance_client_wrapper.place_order(
             symbol=symbol, side="SELL", quantity=quantity, order_type=exit_order_type
         )
         return order_details
     except Exception as e:
-        logger.error(f"execute_exit: Error placing {exit_order_type} exit order: {e}", exc_info=True)
+        logger.error(
+            f"execute_exit: Error placing {exit_order_type} exit order: {e}",
+            exc_info=True,
+        )
         return None
 
 
 def _handle_exit_order_result(order_details: Optional[Dict[str, Any]]):
     """Gère le résultat de l'ordre de sortie (logique simplifiée, WS gère l'état)."""
     if not order_details:
-        logger.error("execute_exit: Failed to place SELL order (order_details is None).")
+        logger.error(
+            "execute_exit: Failed to place SELL order (order_details is None)."
+        )
         # L'état reste 'in_position' jusqu'à confirmation WS ou erreur
         return
 
@@ -95,37 +113,47 @@ def _handle_exit_order_result(order_details: Optional[Dict[str, Any]]):
     # La mise à jour de l'état (in_position=False) est gérée par _handle_execution_report
     # suite au message WebSocket, ce qui est plus fiable que la réponse REST immédiate.
     # On peut mettre un état intermédiaire si besoin.
-    if status not in ["FILLED", "PARTIALLY_FILLED", "NEW"]: # Si échec immédiat
-        logger.warning(f"execute_exit: SELL order {order_id} failed/rejected immediately (Status={status}). State 'in_position' remains True.")
+    if status not in ["FILLED", "PARTIALLY_FILLED", "NEW"]:  # Si échec immédiat
+        logger.warning(
+            f"execute_exit: SELL order {order_id} failed/rejected immediately (Status={status}). State 'in_position' remains True."
+        )
         # Revenir à RUNNING si on était en EXITING
         if state_manager.get_state("status") == "EXITING":
-             # --- CORRECTION ICI ---
-             state_manager.update_state({"status": "RUNNING"})
-             # --- FIN CORRECTION ---
-             broadcast_state_update()
+            # --- CORRECTION ICI ---
+            state_manager.update_state({"status": "RUNNING"})
+            # --- FIN CORRECTION ---
+            broadcast_state_update()
 
 
 def execute_exit(reason: str) -> Optional[Dict[str, Any]]:
     """Fonction principale pour exécuter une sortie de position."""
     exit_info = _calculate_exit_quantity(reason)
-    if not exit_info: return None
+    if not exit_info:
+        return None
 
-    quantity_to_sell, symbol, _ = exit_info # entry_details_copy non utilisé ici
+    quantity_to_sell, symbol, _ = exit_info  # entry_details_copy non utilisé ici
     current_config = config_manager.get_config()
 
     order_details = _place_exit_order(symbol, quantity_to_sell, current_config)
-    _handle_exit_order_result(order_details) # Gère log/état intermédiaire
+    _handle_exit_order_result(order_details)  # Gère log/état intermédiaire
 
     # Rafraîchir l'historique après la tentative de placement
-    if order_details and order_details.get('symbol'):
-        logger.debug(f"execute_exit: Triggering history refresh for {order_details['symbol']} via REST...")
-        threading.Thread(target=refresh_order_history_via_rest, args=(order_details['symbol'], 50), daemon=True).start()
+    if order_details and order_details.get("symbol"):
+        logger.debug(
+            f"execute_exit: Triggering history refresh for {order_details['symbol']} via REST..."
+        )
+        threading.Thread(
+            target=refresh_order_history_via_rest,
+            args=(order_details["symbol"], 50),
+            daemon=True,
+        ).start()
 
     return order_details
 
 
 # --- Fonctions Ordres Stratégie (Appelées par Handlers) ---
 # Note: execute_entry est maintenant dans websocket_handlers
+
 
 def cancel_scalping_order(symbol: str, order_id: int):
     """Annule un ordre LIMIT ouvert."""
@@ -136,14 +164,19 @@ def cancel_scalping_order(symbol: str, order_id: int):
         status = result.get("status")
         logger.info(f"API Cancel Result for order {order_id}: Status={status}")
         # Rafraîchir l'historique
-        logger.debug(f"cancel_scalping_order: Triggering history refresh for {symbol} via REST...")
-        threading.Thread(target=refresh_order_history_via_rest, args=(symbol, 50), daemon=True).start()
+        logger.debug(
+            f"cancel_scalping_order: Triggering history refresh for {symbol} via REST..."
+        )
+        threading.Thread(
+            target=refresh_order_history_via_rest, args=(symbol, 50), daemon=True
+        ).start()
         # L'état (open_order_id) sera mis à jour par _handle_execution_report
     else:
         logger.error(f"Failed API request to cancel order {order_id}.")
 
 
 # --- Thread Principal Bot ---
+
 
 def run_bot():
     """Thread principal (simplifié, la logique est dans les handlers WS)."""
@@ -156,7 +189,9 @@ def run_bot():
         while not state_manager.get_state("stop_main_requested"):
             # La logique principale est maintenant déclenchée par les messages WebSocket
             # et traitée dans websocket_handlers. Ce thread peut rester simple.
-            time.sleep(5) # Dormir pour éviter 100% CPU, vérifier stop flag périodiquement
+            time.sleep(
+                5
+            )  # Dormir pour éviter 100% CPU, vérifier stop flag périodiquement
 
     except Exception as e:
         logger.critical("Run Bot Thread: Major error!", exc_info=True)
@@ -174,6 +209,7 @@ def run_bot():
 
 # --- Thread Keepalive ---
 
+
 def run_keepalive():
     """Thread pour renouveler le listenKey."""
     logger.info("Keepalive Thread: Started.")
@@ -183,39 +219,49 @@ def run_keepalive():
             logger.debug(f"Keepalive Thread: Sending keepalive for {listen_key[:5]}...")
             success = binance_client_wrapper.renew_listen_key(listen_key)
             if not success:
-                logger.error(f"Keepalive Thread: Failed keepalive for {listen_key[:5]}. Stopping thread.")
+                logger.error(
+                    f"Keepalive Thread: Failed keepalive for {listen_key[:5]}. Stopping thread."
+                )
                 state_manager.update_state({"listen_key": None})
-                break # Sortir si échec
+                break  # Sortir si échec
         else:
             logger.warning("Keepalive Thread: No listen_key found. Waiting 60s.")
             wait_time = 60
             for _ in range(wait_time):
-                 if state_manager.get_state("stop_keepalive_requested"): break
-                 time.sleep(1)
-            if state_manager.get_state("stop_keepalive_requested"): break
+                if state_manager.get_state("stop_keepalive_requested"):
+                    break
+                time.sleep(1)
+            if state_manager.get_state("stop_keepalive_requested"):
+                break
             continue
 
         wait_interval = KEEPALIVE_INTERVAL_SECONDS
         for _ in range(wait_interval):
-            if state_manager.get_state("stop_keepalive_requested"): break
+            if state_manager.get_state("stop_keepalive_requested"):
+                break
             time.sleep(1)
-        if state_manager.get_state("stop_keepalive_requested"): break
+        if state_manager.get_state("stop_keepalive_requested"):
+            break
 
     logger.info("Keepalive Thread: Finishing.")
     if state_manager.get_state("keepalive_thread") == threading.current_thread():
-         state_manager.update_state({"keepalive_thread": None})
+        state_manager.update_state({"keepalive_thread": None})
+
 
 # --- Rafraîchissement Historique Ordres ---
 def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 50):
     """Récupère l'historique récent via REST et met à jour StateManager."""
-    if not symbol: symbol = state_manager.get_state("symbol")
+    if not symbol:
+        symbol = state_manager.get_state("symbol")
     if not symbol:
         logger.error("refresh_order_history_via_rest: Symbol not available.")
         return
 
     logger.info(f"Refreshing order history for {symbol} via REST (limit={limit})...")
     try:
-        all_orders_data = binance_client_wrapper.get_all_orders(symbol=symbol, limit=limit)
+        all_orders_data = binance_client_wrapper.get_all_orders(
+            symbol=symbol, limit=limit
+        )
         if all_orders_data is None:
             logger.error("Failed to fetch order history via REST.")
             return
@@ -225,7 +271,9 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 50
     except Exception as e:
         logger.error(f"Error during REST order history refresh: {e}", exc_info=True)
 
+
 # --- Fonctions Contrôle (Orchestration Démarrage/Arrêt) ---
+
 
 def _initialize_client_and_config() -> bool:
     """Initialise client Binance et charge config."""
@@ -237,11 +285,14 @@ def _initialize_client_and_config() -> bool:
     logger.info("Start Core: Binance Client initialized. Config loaded.")
     return True
 
+
 def _load_and_prepare_state() -> bool:
     """Charge état persistant, récupère infos symbole/balances initiales."""
     logger.info("Start Core: Loading state & preparing initial data...")
-    current_state = state_manager.get_state() # Chargé à l'init du manager
-    logger.info(f"Start Core: State loaded (in_position={current_state.get('in_position')}).")
+    current_state = state_manager.get_state()  # Chargé à l'init du manager
+    logger.info(
+        f"Start Core: State loaded (in_position={current_state.get('in_position')})."
+    )
 
     current_symbol = config_manager.get_value("SYMBOL", SYMBOL)
     symbol_info = binance_client_wrapper.get_symbol_info(current_symbol)
@@ -266,7 +317,9 @@ def _load_and_prepare_state() -> bool:
     initial_base = binance_client_wrapper.get_account_balance(asset=base_asset)
 
     state_updates = {
-        "symbol": current_symbol, "base_asset": base_asset, "quote_asset": quote_asset,
+        "symbol": current_symbol,
+        "base_asset": base_asset,
+        "quote_asset": quote_asset,
         "available_balance": float(initial_quote or 0.0),
         "symbol_quantity": float(initial_base or 0.0),
     }
@@ -280,24 +333,33 @@ def _load_and_prepare_state() -> bool:
     final_entry_details = loaded_entry_details
 
     if loaded_in_position and fetched_base_qty <= 0:
-        logger.warning("Start Core: Consistency Check - In position but base qty <= 0. Forcing OUT.")
+        logger.warning(
+            "Start Core: Consistency Check - In position but base qty <= 0. Forcing OUT."
+        )
         final_in_position = False
         final_entry_details = None
     elif not loaded_in_position and fetched_base_qty > 0:
-        logger.warning(f"Start Core: Consistency Check - NOT in position but base qty {fetched_base_qty} > 0. Keeping OUT.")
+        logger.warning(
+            f"Start Core: Consistency Check - NOT in position but base qty {fetched_base_qty} > 0. Keeping OUT."
+        )
         final_in_position = False
         final_entry_details = None
     elif loaded_in_position and not loaded_entry_details:
-         logger.warning("Start Core: Consistency Check - In position but no entry_details. Forcing OUT.")
-         final_in_position = False
-         final_entry_details = None
+        logger.warning(
+            "Start Core: Consistency Check - In position but no entry_details. Forcing OUT."
+        )
+        final_in_position = False
+        final_entry_details = None
 
     state_updates["in_position"] = final_in_position
     state_updates["entry_details"] = final_entry_details
 
     state_manager.update_state(state_updates)
-    logger.info(f"Start Core: Initial State - Symbol:{current_symbol}, Quote:{quote_asset}={state_updates['available_balance']:.4f}, Base:{base_asset}={state_updates['symbol_quantity']:.8f}, Position:{final_in_position}")
+    logger.info(
+        f"Start Core: Initial State - Symbol:{current_symbol}, Quote:{quote_asset}={state_updates['available_balance']:.4f}, Base:{base_asset}={state_updates['symbol_quantity']:.8f}, Position:{final_in_position}"
+    )
     return True
+
 
 def _prefetch_kline_history() -> bool:
     """Précharge historique klines pour SWING."""
@@ -311,28 +373,74 @@ def _prefetch_kline_history() -> bool:
     required_limit = state_manager.get_required_klines()
     symbol = state_manager.get_state("symbol")
 
-    logger.info(f"Start Core (SWING): Prefetching {required_limit} klines ({symbol} {current_tf})...")
-    initial_klines = binance_client_wrapper.get_klines(symbol=symbol, interval=current_tf, limit=required_limit)
+    logger.info(
+        f"Start Core (SWING): Prefetching {required_limit} klines ({symbol} {current_tf})..."
+    )
+    initial_klines = binance_client_wrapper.get_klines(
+        symbol=symbol, interval=current_tf, limit=required_limit
+    )
 
     if initial_klines:
         state_manager.resize_kline_history(required_limit)
         state_manager.replace_kline_history(initial_klines)
-        logger.info(f"Start Core (SWING): Kline history prefetched ({len(initial_klines)}).")
+        logger.info(
+            f"Start Core (SWING): Kline history prefetched ({len(initial_klines)})."
+        )
         return True
     else:
         logger.error(f"Start Core (SWING): Failed to prefetch klines.")
         state_manager.clear_kline_history()
-        return False # Échec critique pour SWING
+        return False  # Échec critique pour SWING
+
+
+def _prefetch_kline_history_scalping2() -> bool:
+    """Précharge historique klines pour SCALPING2."""
+    strategy_type = config_manager.get_value("STRATEGY_TYPE")
+    if strategy_type != "SCALPING2":
+        logger.info(f"Start Core ({strategy_type}): Kline prefetch SCALPING2 skipped.")
+        state_manager.clear_kline_history()
+        return True
+
+    current_tf = config_manager.get_value("TIMEFRAME_STR", "1m")
+    required_limit = max(20, 22)  # 20 minimum pour indicateurs, 22 pour marge
+    symbol = state_manager.get_state("symbol")
+
+    logger.info(
+        f"Start Core (SCALPING2): Prefetching {required_limit} klines ({symbol} {current_tf})..."
+    )
+    initial_klines = binance_client_wrapper.get_klines(
+        symbol=symbol, interval=current_tf, limit=required_limit
+    )
+
+    if initial_klines:
+        state_manager.resize_kline_history(required_limit)
+        state_manager.replace_kline_history(initial_klines)
+        logger.info(
+            f"Start Core (SCALPING2): Kline history prefetched ({len(initial_klines)})."
+        )
+        return True
+    else:
+        logger.error(f"Start Core (SCALPING2): Failed to prefetch klines.")
+        state_manager.clear_kline_history()
+        return False
+
 
 def _start_main_thread() -> bool:
     """Démarre le thread principal du bot."""
     logger.info("Start Core: Starting main bot thread...")
-    if state_manager.get_state("main_thread") and state_manager.get_state("main_thread").is_alive():
+    if (
+        state_manager.get_state("main_thread")
+        and state_manager.get_state("main_thread").is_alive()
+    ):
         logger.error("Start Core: Main thread already running.")
         return False
 
-    new_main_thread = threading.Thread(target=run_bot, daemon=True, name="BotCoreThread")
-    state_manager.update_state({"main_thread": new_main_thread, "stop_main_requested": False})
+    new_main_thread = threading.Thread(
+        target=run_bot, daemon=True, name="BotCoreThread"
+    )
+    state_manager.update_state(
+        {"main_thread": new_main_thread, "stop_main_requested": False}
+    )
     new_main_thread.start()
     time.sleep(0.5)
 
@@ -344,6 +452,7 @@ def _start_main_thread() -> bool:
         state_manager.update_state({"main_thread": None, "status": "ERROR"})
         broadcast_state_update()
         return False
+
 
 def _stop_main_thread(timeout: int = 5) -> bool:
     """Arrête le thread principal du bot."""
@@ -367,55 +476,69 @@ def _stop_main_thread(timeout: int = 5) -> bool:
         logger.info("Stop Core: No main thread found.")
         return True
 
+
 # --- Gestion WebSocket ---
+
 
 def _handle_websocket_message(ws_client_instance, raw_msg: str):
     """Callback central pour messages WebSocket combinés."""
     try:
         combined_data = json.loads(raw_msg)
         if not isinstance(combined_data, dict):
-             logger.warning(f"Decoded combined message is not a dict: {combined_data}")
-             return
+            logger.warning(f"Decoded combined message is not a dict: {combined_data}")
+            return
 
-        stream_name = combined_data.get('stream')
-        data = combined_data.get('data')
+        stream_name = combined_data.get("stream")
+        data = combined_data.get("data")
 
         if "result" in combined_data and "id" in combined_data:
-             logger.info(f"WebSocket ACK received (ID: {combined_data['id']}): {combined_data['result']}")
-             return
+            logger.info(
+                f"WebSocket ACK received (ID: {combined_data['id']}): {combined_data['result']}"
+            )
+            return
 
         if not stream_name or not isinstance(data, dict):
-             # logger.debug(f"Non-combined or invalid WS message: {combined_data}") # Verbeux
-             return
+            # logger.debug(f"Non-combined or invalid WS message: {combined_data}") # Verbeux
+            return
 
     except json.JSONDecodeError:
         logger.warning(f"Failed to decode combined WS JSON: {raw_msg}")
         return
     except Exception as e:
-        logger.error(f"Error pre-processing combined WS message: {e} - Msg: {raw_msg}", exc_info=True)
+        logger.error(
+            f"Error pre-processing combined WS message: {e} - Msg: {raw_msg}",
+            exc_info=True,
+        )
         return
 
     # --- Routage vers Handlers Spécifiques ---
     try:
-        event_type = data.get('e')
+        event_type = data.get("e")
         if event_type:
-            if event_type == 'kline':
+            if event_type == "kline":
                 websocket_handlers.process_kline_message(data)
-            elif event_type in ['executionReport', 'outboundAccountPosition', 'balanceUpdate']:
-                 websocket_handlers.process_user_data_message(data)
+            elif event_type in [
+                "executionReport",
+                "outboundAccountPosition",
+                "balanceUpdate",
+            ]:
+                websocket_handlers.process_user_data_message(data)
             # Ajouter d'autres types d'événements si nécessaire
             # elif event_type == 'aggTrade': websocket_handlers.process_agg_trade_message(data)
-            elif event_type == 'error':
-                 logger.error(f"WS Application Error: {data.get('m', 'Unknown error')}")
-        else: # Pas d'event type 'e' -> bookTicker ou depth
-            if 'bookTicker' in stream_name:
+            elif event_type == "error":
+                logger.error(f"WS Application Error: {data.get('m', 'Unknown error')}")
+        else:  # Pas d'event type 'e' -> bookTicker ou depth
+            if "bookTicker" in stream_name:
                 websocket_handlers.process_book_ticker_message(data)
-            elif 'depth' in stream_name:
-                 websocket_handlers.process_depth_message(data)
+            elif "depth" in stream_name:
+                websocket_handlers.process_depth_message(data)
             # else: logger.warning(f"Unrecognized combined message without 'e': Stream={stream_name}") # Verbeux
 
     except Exception as e:
-        logger.error(f"Error routing/processing combined WS message: {e} - Stream: {stream_name}", exc_info=True)
+        logger.error(
+            f"Error routing/processing combined WS message: {e} - Stream: {stream_name}",
+            exc_info=True,
+        )
 
 
 def _stop_keepalive_thread(timeout: int = 5) -> bool:
@@ -426,16 +549,18 @@ def _stop_keepalive_thread(timeout: int = 5) -> bool:
         state_manager.update_state({"stop_keepalive_requested": True})
         keepalive_thread.join(timeout=timeout)
         if keepalive_thread.is_alive():
-            logger.warning(f"Stop Core: Keepalive thread did not stop within {timeout}s.")
+            logger.warning(
+                f"Stop Core: Keepalive thread did not stop within {timeout}s."
+            )
             return False
         else:
             logger.info("Stop Core: Keepalive thread stopped.")
             state_manager.update_state({"keepalive_thread": None})
             return True
     elif keepalive_thread:
-         logger.info("Stop Core: Keepalive thread already stopped.")
-         state_manager.update_state({"keepalive_thread": None})
-         return True
+        logger.info("Stop Core: Keepalive thread already stopped.")
+        state_manager.update_state({"keepalive_thread": None})
+        return True
     else:
         logger.info("Stop Core: No Keepalive thread found.")
         return True
@@ -454,14 +579,20 @@ def _start_websockets() -> bool:
         current_symbol = state_manager.get_state("symbol")
         strategy_type = config_manager.get_value("STRATEGY_TYPE")
         current_config = config_manager.get_config()
-        if not current_symbol: raise ValueError("Symbol missing in state.")
+        if not current_symbol:
+            raise ValueError("Symbol missing in state.")
 
-        ws_stream_url = "wss://testnet.binance.vision" if use_testnet else "wss://stream.binance.com:9443"
+        ws_stream_url = (
+            "wss://testnet.binance.vision"
+            if use_testnet
+            else "wss://stream.binance.com:9443"
+        )
         ws_client = SpotWebsocketStreamClient(
-            stream_url=ws_stream_url, on_message=_handle_websocket_message,
+            stream_url=ws_stream_url,
+            on_message=_handle_websocket_message,
             on_close=lambda *args: logger.info("WebSocket Client: Connection closed."),
             on_error=lambda _, e: logger.error(f"WebSocket Client: Error: {e}"),
-            is_combined=True
+            is_combined=True,
         )
         state_manager.update_state({"websocket_client": ws_client})
         logger.info(f"WebSocket Client created (URL: {ws_stream_url})")
@@ -472,66 +603,101 @@ def _start_websockets() -> bool:
         # 1. Listen Key (User Data)
         logger.info("Start Core: Obtaining ListenKey...")
         listen_key = binance_client_wrapper.create_listen_key()
-        if not listen_key: raise ConnectionError("Failed to obtain ListenKey.")
+        if not listen_key:
+            raise ConnectionError("Failed to obtain ListenKey.")
         state_manager.update_state({"listen_key": listen_key})
         logger.info(f"Start Core: ListenKey obtained: {listen_key[:5]}...")
         streams_to_subscribe.append(listen_key)
 
         # 2. Market Data Streams
-        streams_to_subscribe.append(f"{stream_symbol_lower}@bookTicker") # Toujours utile
-        if strategy_type == 'SCALPING':
+        streams_to_subscribe.append(
+            f"{stream_symbol_lower}@bookTicker"
+        )  # Toujours utile
+
+        if strategy_type == "SCALPING":
             depth_levels = current_config.get("SCALPING_DEPTH_LEVELS", 5)
             depth_speed = current_config.get("SCALPING_DEPTH_SPEED", "100ms")
-            streams_to_subscribe.append(f"{stream_symbol_lower}@depth{depth_levels}@{depth_speed}")
-            # streams_to_subscribe.append(f"{stream_symbol_lower}@aggTrade") # Optionnel
+            streams_to_subscribe.append(
+                f"{stream_symbol_lower}@depth{depth_levels}@{depth_speed}"
+            )
             logger.info("Start Core (SCALPING): Added bookTicker, depth streams.")
-        elif strategy_type == 'SWING':
+
+        elif strategy_type == "SCALPING2":
             current_tf = state_manager.get_state("timeframe")
             streams_to_subscribe.append(f"{stream_symbol_lower}@kline_{current_tf}")
-            logger.info(f"Start Core (SWING): Added bookTicker, kline_{current_tf} streams.")
+            logger.info(
+                f"Start Core (SCALPING2): Added bookTicker, kline_{current_tf} streams."
+            )
+
+        elif strategy_type == "SWING":
+            current_tf = state_manager.get_state("timeframe")
+            streams_to_subscribe.append(f"{stream_symbol_lower}@kline_{current_tf}")
+            logger.info(
+                f"Start Core (SWING): Added bookTicker, kline_{current_tf} streams."
+            )
 
         # 3. Souscription
         if streams_to_subscribe:
             logger.info(f"Start Core: Subscribing to combined: {streams_to_subscribe}")
             ws_client.subscribe(stream=streams_to_subscribe, id=1)
-            time.sleep(1) # Attendre ACK potentiel
+            time.sleep(1)  # Attendre ACK potentiel
         else:
             logger.warning("Start Core: No streams to subscribe?")
 
         # 4. Démarrer Keepalive
         logger.info("Start Core: Starting Keepalive Thread...")
-        if state_manager.get_state("keepalive_thread") and state_manager.get_state("keepalive_thread").is_alive():
-             logger.warning("Start Core: Keepalive thread already running? Stopping first...")
-             _stop_keepalive_thread()
-        new_keepalive_thread = threading.Thread(target=run_keepalive, daemon=True, name="KeepaliveThread")
-        state_manager.update_state({"keepalive_thread": new_keepalive_thread, "stop_keepalive_requested": False})
+        if (
+            state_manager.get_state("keepalive_thread")
+            and state_manager.get_state("keepalive_thread").is_alive()
+        ):
+            logger.warning(
+                "Start Core: Keepalive thread already running? Stopping first..."
+            )
+            _stop_keepalive_thread()
+        new_keepalive_thread = threading.Thread(
+            target=run_keepalive, daemon=True, name="KeepaliveThread"
+        )
+        state_manager.update_state(
+            {
+                "keepalive_thread": new_keepalive_thread,
+                "stop_keepalive_requested": False,
+            }
+        )
         new_keepalive_thread.start()
-        if not new_keepalive_thread.is_alive(): raise ConnectionError("Failed to start Keepalive thread!")
+        if not new_keepalive_thread.is_alive():
+            raise ConnectionError("Failed to start Keepalive thread!")
         logger.info("Start Core: Keepalive thread started.")
 
         logger.info("Start Core: WebSockets and Keepalive started.")
         return True
 
     except (ValueError, ConnectionError, ClientError, ServerError) as e:
-        logger.critical(f"Start Core: Error during WS/Keepalive startup: {e}", exc_info=True)
-        if listen_key: binance_client_wrapper.close_listen_key(listen_key)
+        logger.critical(
+            f"Start Core: Error during WS/Keepalive startup: {e}", exc_info=True
+        )
+        if listen_key:
+            binance_client_wrapper.close_listen_key(listen_key)
         _stop_websockets(is_partial_stop=True)
         state_manager.update_state({"status": "ERROR", "listen_key": None})
         broadcast_state_update()
         return False
     except Exception as e:
-         logger.critical(f"Start Core: Unexpected error during WS/Keepalive startup: {e}", exc_info=True)
-         if listen_key: binance_client_wrapper.close_listen_key(listen_key)
-         _stop_websockets(is_partial_stop=True)
-         state_manager.update_state({"status": "ERROR", "listen_key": None})
-         broadcast_state_update()
-         return False
+        logger.critical(
+            f"Start Core: Unexpected error during WS/Keepalive startup: {e}",
+            exc_info=True,
+        )
+        if listen_key:
+            binance_client_wrapper.close_listen_key(listen_key)
+        _stop_websockets(is_partial_stop=True)
+        state_manager.update_state({"status": "ERROR", "listen_key": None})
+        broadcast_state_update()
+        return False
 
 
 def _stop_websockets(is_partial_stop: bool = False) -> bool:
     """Arrête client WebSocket et thread keepalive."""
     log_prefix = "Stop Core (Partial):" if is_partial_stop else "Stop Core:"
-    _stop_keepalive_thread() # Arrêter keepalive d'abord
+    _stop_keepalive_thread()  # Arrêter keepalive d'abord
     ws_client = state_manager.get_state("websocket_client")
     if ws_client:
         logger.info(f"{log_prefix} Stopping WebSocket Client...")
@@ -539,7 +705,8 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
             ws_client.stop()
             time.sleep(0.5)
             logger.info(f"{log_prefix} WebSocket Client stop initiated.")
-        except Exception as e: logger.error(f"{log_prefix} Error stopping WS Client: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"{log_prefix} Error stopping WS Client: {e}", exc_info=True)
         finally:
             state_manager.update_state({"websocket_client": None})
             logger.info(f"{log_prefix} WebSocket Client reference cleared.")
@@ -551,28 +718,43 @@ def _stop_websockets(is_partial_stop: bool = False) -> bool:
 
 # --- Fonctions Contrôle Publiques ---
 
+
 def start_bot_core() -> tuple[bool, str]:
     """Fonction principale pour démarrer le bot."""
     logger.info("=" * 10 + " BOT START REQUESTED " + "=" * 10)
     current_status = state_manager.get_state("status")
     if current_status not in ["Arrêté", "STOPPED", "ERROR"]:
-        logger.warning(f"Start Core: Attempted start while status is '{current_status}'.")
+        logger.warning(
+            f"Start Core: Attempted start while status is '{current_status}'."
+        )
         return False, f"Bot is already {current_status}."
 
     state_manager.update_state({"status": "STARTING"})
     broadcast_state_update()
     state_manager.clear_realtime_data()
 
-    if not _initialize_client_and_config(): return False, "Échec initialisation client/config."
-    if not _load_and_prepare_state(): return False, "Échec chargement état/données initiales."
-    if not _prefetch_kline_history() and config_manager.get_value("STRATEGY_TYPE") == "SWING":
-        # Échec critique si SWING ne peut pas précharger
-        state_manager.update_state({"status": "ERROR"})
-        broadcast_state_update()
-        return False, "Échec préchargement Klines (requis pour SWING)."
-    if not _start_websockets(): return False, "Échec démarrage WebSockets."
+    if not _initialize_client_and_config():
+        return False, "Échec initialisation client/config."
+    if not _load_and_prepare_state():
+        return False, "Échec chargement état/données initiales."
+    # --- Ajout SCALPING2 ---
+    if config_manager.get_value("STRATEGY_TYPE") == "SCALPING2":
+        if not _prefetch_kline_history_scalping2():
+            state_manager.update_state({"status": "ERROR"})
+            broadcast_state_update()
+            return False, "Échec préchargement Klines (requis pour SCALPING2)."
+    elif config_manager.get_value("STRATEGY_TYPE") == "SWING":
+        if (
+            not _prefetch_kline_history()
+            and config_manager.get_value("STRATEGY_TYPE") == "SWING"
+        ):
+            state_manager.update_state({"status": "ERROR"})
+            broadcast_state_update()
+            return False, "Échec préchargement Klines (requis pour SWING)."
+    if not _start_websockets():
+        return False, "Échec démarrage WebSockets."
     if not _start_main_thread():
-        _stop_websockets(is_partial_stop=True) # Nettoyer WS si thread principal échoue
+        _stop_websockets(is_partial_stop=True)  # Nettoyer WS si thread principal échoue
         return False, "Échec démarrage thread principal."
 
     state_manager.update_state({"status": "RUNNING"})
@@ -602,13 +784,21 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
         logger.info(f"{log_prefix} Closing ListenKey {listen_key_to_close[:5]}...")
         binance_client_wrapper.close_listen_key(listen_key_to_close)
 
-    final_status = "STOPPED" if not partial_cleanup else state_manager.get_state("status")
-    state_manager.update_state({
-        "status": final_status, "stop_main_requested": False,
-        "open_order_id": None, "open_order_timestamp": None,
-        "listen_key": None, "websocket_client": None,
-        "keepalive_thread": None, "stop_keepalive_requested": False,
-    })
+    final_status = (
+        "STOPPED" if not partial_cleanup else state_manager.get_state("status")
+    )
+    state_manager.update_state(
+        {
+            "status": final_status,
+            "stop_main_requested": False,
+            "open_order_id": None,
+            "open_order_timestamp": None,
+            "listen_key": None,
+            "websocket_client": None,
+            "keepalive_thread": None,
+            "stop_keepalive_requested": False,
+        }
+    )
     broadcast_state_update()
 
     if not partial_cleanup:
@@ -618,8 +808,13 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
     logger.info(f"{log_prefix} Stop sequence completed. Final Status: {final_status}")
     return True, f"Bot arrêté (Status: {final_status})."
 
+
 # --- Exports ---
 __all__ = [
-    'execute_exit', 'run_bot', 'start_bot_core', 'stop_bot_core',
-    'cancel_scalping_order', 'refresh_order_history_via_rest'
+    "execute_exit",
+    "run_bot",
+    "start_bot_core",
+    "stop_bot_core",
+    "cancel_scalping_order",
+    "refresh_order_history_via_rest",
 ]

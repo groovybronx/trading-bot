@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Bot Dashboard</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <header>
         <h1>Trading Bot Dashboard</h1>
@@ -17,11 +19,13 @@
             <p>État : <span id="status-value">Inconnu</span></p>
             <p>Stratégie : <span id="strategy-type-value">N/A</span></p>
             <p>Symbole : <span id="symbol-value">N/A</span></p>
-            <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour SWING)</small></p>
+            <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour
+                    SWING)</small></p>
             <p>Balance (<span id="quote-asset-label">USDT</span>) : <span id="balance-value">N/A</span></p>
             <p>Quantité (<span id="base-asset-label">N/A</span>) : <span id="quantity-value">N/A</span></p>
             <!-- *** CORRECTION: Changed id from "price-value" to "current-price" *** -->
-            <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="current-price" class="status-value">N/A</span></p>
+            <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="current-price"
+                    class="status-value">N/A</span></p>
             <!-- *** FIN CORRECTION *** -->
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
         </section>
@@ -46,7 +50,9 @@
                     </thead>
                     <tbody id="order-history-body">
                         <template id="order-history-placeholder">
-                        <tr><td colspan="10">Aucun ordre dans l'historique de cette session.</td></tr>
+                            <tr>
+                                <td colspan="10">Aucun ordre dans l'historique de cette session.</td>
+                            </tr>
                         </template>
                     </tbody>
                 </table>
@@ -54,32 +60,33 @@
         </section>
 
         <section id="logs">
-             <h2>Logs</h2>
-             <pre id="log-output">En attente des logs du backend...</pre>
+            <h2>Logs</h2>
+            <pre id="log-output">En attente des logs du backend...</pre>
         </section>
 
         <section id="controls">
-             <h2>Contrôles</h2>
-             <button id="start-bot-btn">Démarrer le Bot</button>
-             <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
+            <h2>Contrôles</h2>
+            <button id="start-bot-btn">Démarrer le Bot</button>
+            <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
         </section>
 
         <section id="parameters">
-             <h2>Paramètres de Stratégie</h2>
+            <h2>Paramètres de Stratégie</h2>
 
-             <div>
-                 <label for="param-strategy-type">Type de Stratégie :</label>
-                 <select id="param-strategy-type" name="STRATEGY_TYPE">
-                     <option value="SWING">SWING (EMA/RSI - Kline)</option>
-                     <option value="SCALPING">SCALPING (Book Ticker)</option>
-                 </select>
-             </div>
-             <hr>
+            <div>
+                <label for="param-strategy-type">Type de Stratégie :</label>
+                <select id="param-strategy-type" name="STRATEGY_TYPE">
+                    <option value="SWING">SWING (EMA/RSI - Kline)</option>
+                    <option value="SCALPING">SCALPING (Book Ticker)</option>
+                    <option value="SCALPING2">SCALPING2 (Book Ticker + Indicateurs)</option>
+                </select>
+            </div>
+            <hr>
 
-             <div id="swing-params">
-                 <h3>Paramètres SWING</h3>
-                 <div class="param-grid">
-                     <div>
+            <div id="swing-params">
+                <h3>Paramètres SWING</h3>
+                <div class="param-grid">
+                    <div>
                         <label for="param-timeframe">Timeframe :</label>
                         <select id="param-timeframe" name="TIMEFRAME_STR">
                             <option value="1m">1m</option>
@@ -107,65 +114,122 @@
                         <label for="param-ema-long">EMA Longue :</label>
                         <input type="number" id="param-ema-long" name="EMA_LONG_PERIOD" min="2" step="1">
                     </div>
-                     <div>
+                    <div>
                         <label for="param-ema-filter">EMA Filtre :</label>
                         <input type="number" id="param-ema-filter" name="EMA_FILTER_PERIOD" min="1" step="1">
                     </div>
-                     <div>
+                    <div>
                         <label for="param-rsi-period">Période RSI :</label>
                         <input type="number" id="param-rsi-period" name="RSI_PERIOD" min="2" step="1">
                     </div>
-                     <div>
+                    <div>
                         <label for="param-rsi-ob">RSI Surachat :</label>
                         <input type="number" id="param-rsi-ob" name="RSI_OVERBOUGHT" min="51" max="100" step="1">
                     </div>
-                     <div>
+                    <div>
                         <label for="param-rsi-os">RSI Survente :</label>
                         <input type="number" id="param-rsi-os" name="RSI_OVERSOLD" min="0" max="49" step="1">
                     </div>
-                     <div>
+                    <div>
                         <label for="param-risk">Risque / Trade (%) :</label>
                         <input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="10" step="0.1">
                     </div>
                     <div>
                         <label for="param-capital-allocation">Allocation Capital (%) :</label>
-                        <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100" step="1">
-                     </div>
-                     <div>
+                        <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100"
+                            step="1">
+                    </div>
+                    <div>
                         <label for="param-volume-avg">Moy. Vol. Période :</label>
                         <input type="number" id="param-volume-avg" name="VOLUME_AVG_PERIOD" min="1" step="1">
                     </div>
-                     <div class="checkbox-group">
+                    <div class="checkbox-group">
                         <input type="checkbox" id="param-use-ema-filter" name="USE_EMA_FILTER">
                         <label for="param-use-ema-filter">Utiliser Filtre EMA</label>
                     </div>
-                     <div class="checkbox-group">
+                    <div class="checkbox-group">
                         <input type="checkbox" id="param-use-volume" name="USE_VOLUME_CONFIRMATION">
                         <label for="param-use-volume">Utiliser Confirmation Volume</label>
                     </div>
-                 </div>
-             </div> <!-- Fin swing-params -->
+                </div>
+            </div> <!-- Fin swing-params -->
 
-             <div id="scalping-params" style="display: none;">
-                 <h3>Paramètres SCALPING</h3>
-                 <div class="param-grid">
-                     <div>
-                         <label for="param-sl">Stop Loss (%) :</label>
-                         <input type="number" id="param-sl" name="STOP_LOSS_PERCENTAGE" min="0.1" max="20" step="0.01" value="0.5">
-                     </div>
-                     <div>
-                         <label for="param-tp">Take Profit (%) :</label>
-                         <input type="number" id="param-tp" name="TAKE_PROFIT_PERCENTAGE" min="0.1" max="20" step="0.01" value="0.5">
-                     </div>
-                     <div>
-                         <label for="param-limit-timeout">Timeout Ordre Limit (ms) :</label>
-                         <input type="number" id="param-limit-timeout" name="SCALPING_LIMIT_ORDER_TIMEOUT_MS" min="500" max="60000" step="100">
-                     </div>
-                 </div>
-             </div> <!-- Fin scalping-params -->
+            <div id="scalping-params" style="display: none;">
+                <h3>Paramètres SCALPING</h3>
+                <div class="param-grid">
+                    <div>
+                        <label for="param-supertrend-atr">ATR Période (Supertrend) :</label>
+                        <input type="number" id="param-supertrend-atr" name="SUPERTREND_ATR_PERIOD" min="1" max="50"
+                            step="1" value="3">
+                    </div>
+                    <div>
+                        <label for="param-supertrend-mult">ATR Multiplicateur :</label>
+                        <input type="number" id="param-supertrend-mult" name="SUPERTREND_ATR_MULTIPLIER" min="0.1"
+                            max="5" step="0.1" value="1.5">
+                    </div>
+                    <div>
+                        <label for="param-rsi-period-scalp">RSI Période :</label>
+                        <input type="number" id="param-rsi-period-scalp" name="SCALPING_RSI_PERIOD" min="2" max="30"
+                            step="1" value="7">
+                    </div>
+                    <div>
+                        <label for="param-stoch-k">Stochastic K Période :</label>
+                        <input type="number" id="param-stoch-k" name="STOCH_K_PERIOD" min="1" max="30" step="1"
+                            value="14">
+                    </div>
+                    <div>
+                        <label for="param-stoch-d">Stochastic D Période :</label>
+                        <input type="number" id="param-stoch-d" name="STOCH_D_PERIOD" min="1" max="30" step="1"
+                            value="3">
+                    </div>
+                    <div>
+                        <label for="param-stoch-smooth">Stochastic Lissage :</label>
+                        <input type="number" id="param-stoch-smooth" name="STOCH_SMOOTH" min="1" max="30" step="1"
+                            value="3">
+                    </div>
+                    <div>
+                        <label for="param-bb-period">Bollinger Période :</label>
+                        <input type="number" id="param-bb-period" name="BB_PERIOD" min="5" max="50" step="1" value="20">
+                    </div>
+                    <div>
+                        <label for="param-bb-std">Bollinger Déviation :</label>
+                        <input type="number" id="param-bb-std" name="BB_STD" min="0.1" max="5" step="0.1" value="2">
+                    </div>
+                    <div>
+                        <label for="param-sl">Stop Loss (%) :</label>
+                        <input type="number" id="param-sl" name="STOP_LOSS_PERCENTAGE" min="0.1" max="20" step="0.01"
+                            value="0.5">
+                    </div>
+                    <div>
+                        <label for="param-tp1">Take Profit 1 (%) :</label>
+                        <input type="number" id="param-tp1" name="TAKE_PROFIT_1_PERCENTAGE" min="0.1" max="20"
+                            step="0.01" value="0.75">
+                    </div>
+                    <div>
+                        <label for="param-tp2">Take Profit 2 (%) :</label>
+                        <input type="number" id="param-tp2" name="TAKE_PROFIT_2_PERCENTAGE" min="0.1" max="20"
+                            step="0.01" value="1">
+                    </div>
+                    <div>
+                        <label for="param-trailing">Trailing Stop (%) :</label>
+                        <input type="number" id="param-trailing" name="TRAILING_STOP_PERCENTAGE" min="0.1" max="20"
+                            step="0.01" value="0.3">
+                    </div>
+                    <div>
+                        <label for="param-time-stop">Time Stop (min) :</label>
+                        <input type="number" id="param-time-stop" name="TIME_STOP_MINUTES" min="1" max="60" step="1"
+                            value="15">
+                    </div>
+                    <div>
+                        <label for="param-vol-ma">Volume MA Période :</label>
+                        <input type="number" id="param-vol-ma" name="VOLUME_MA_PERIOD" min="1" max="50" step="1"
+                            value="20">
+                    </div>
+                </div>
+            </div> <!-- Fin scalping-params -->
 
-             <button id="save-params-btn">Sauvegarder les Paramètres</button>
-             <p id="param-save-status"></p>
+            <button id="save-params-btn">Sauvegarder les Paramètres</button>
+            <p id="param-save-status"></p>
         </section>
 
     </main>
@@ -176,4 +240,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>
