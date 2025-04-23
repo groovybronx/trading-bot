@@ -62,8 +62,8 @@ def broadcast_message(message_dict: dict):
 def broadcast_state_update():
     """Récupère l'état actuel complet et le diffuse."""
     # Imports locaux pour éviter dépendances circulaires au chargement
-    from state_manager import state_manager
-    from config_manager import config_manager
+    from manager.state_manager import state_manager
+    from manager.config_manager import config_manager
 
     try:
         current_state = state_manager.get_state()
@@ -92,7 +92,7 @@ def broadcast_state_update():
 def broadcast_order_history_update():
     """Récupère l'historique des ordres et le diffuse."""
     # Import local
-    from state_manager import state_manager
+    from manager.state_manager import state_manager
 
     try:
         history = state_manager.get_order_history()

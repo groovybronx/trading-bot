@@ -8,7 +8,7 @@ import sys
 # from typing import Set # Plus nécessaire
 
 # Import broadcast_message depuis websocket_utils
-from websocket_utils import (
+from utils.websocket_utils import (
     broadcast_message,
 )  # connected_clients n'est plus nécessaire ici
 

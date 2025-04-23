@@ -575,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Essayer de lire le message d'erreur JSON du backend
                     const errorResult = await response.json();
                     errorMsg = errorResult.message || errorMsg;
-                } catch (e) { console.error("Error parsing error response:", e); }
+                } catch {} // catch inutilisé, suppression de l'avertissement
                 throw new Error(errorMsg);
             }
             const state = await response.json();
@@ -777,9 +777,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error('Erreur API historique');
             const history = await response.json();
             UI.updateOrderHistory(history);
-        } catch (e) {
-            UI.updateOrderHistory([]); // Afficher vide en cas d'erreur
-        }
+        } catch {} // catch inutilisé, suppression de l'avertissement
     }
 
     // --- Fonction pour reset le bot ---

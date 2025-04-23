@@ -14,7 +14,7 @@ from binance.error import ClientError, ServerError
 from decimal import Decimal, InvalidOperation # Import Decimal
 
 # Import config manager to get settings like USE_TESTNET
-from config_manager import config_manager
+from manager.config_manager import config_manager
 # Import order utils pour formater/valider si nécessaire (mais idéalement fait avant)
 from utils.order_utils import format_quantity, format_price, get_symbol_filter # Importer les fonctions nécessaires
 

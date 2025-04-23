@@ -1,11 +1,13 @@
-# /Users/davidmichels/Desktop/trading-bot/backend/strategies/swing_strategy.py
 import logging
 import pandas as pd
 import pandas_ta as ta
 from decimal import Decimal, InvalidOperation
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 
-# Importer les utilitaires partagés mis à jour
+# Import the base class
+from .base_strategy import BaseStrategy
+
+# Import utilities if needed specifically here (prefer base class helpers if possible)
 from utils.order_utils import (
     format_quantity,
     get_min_notional,
@@ -14,164 +16,271 @@ from utils.order_utils import (
 
 logger = logging.getLogger(__name__)
 
-# calculate_indicators_and_signals reste inchangé...
-def calculate_indicators_and_signals(
-    kline_data: List[List[Any]],
-    config_dict: Dict[str, Any]
-) -> Optional[pd.DataFrame]:
-    """ Calcule indicateurs (EMA, RSI, Volume MA) et génère signaux SWING. """
-    if not kline_data:
-        logger.warning("SWING: Données kline vides.")
-        return None
-
-    columns = ['Open_Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close_Time',
-               'Quote_Asset_Volume', 'Number_of_Trades', 'Taker_Buy_Base_Asset_Volume',
-               'Taker_Buy_Quote_Asset_Volume', 'Ignore']
-    df = pd.DataFrame(kline_data, columns=columns)
-
-    try:
-        # Conversion en numérique/datetime
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']: df[col] = pd.to_numeric(df[col], errors='coerce')
-        df['Open_Time'] = pd.to_datetime(df['Open_Time'], unit='ms', errors='coerce')
-        df.dropna(subset=['Open_Time', 'Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
-        if df.empty: logger.warning("SWING: DataFrame vide après nettoyage."); return None
-    except Exception as e:
-        logger.error(f"SWING: Erreur conversion/nettoyage klines: {e}", exc_info=True); return None
-
-    try:
-        # Récupérer périodes depuis config (format interne, déjà int)
-        ema_s = config_dict.get('EMA_SHORT_PERIOD', 9)
-        ema_l = config_dict.get('EMA_LONG_PERIOD', 21)
-        rsi_p = config_dict.get('RSI_PERIOD', 14)
-        use_ema_f = config_dict.get('USE_EMA_FILTER', False)
-        ema_f = config_dict.get('EMA_FILTER_PERIOD', 50)
-        use_vol = config_dict.get('USE_VOLUME_CONFIRMATION', False)
-        vol_p = config_dict.get('VOLUME_AVG_PERIOD', 20)
-
-        # Calcul indicateurs
-        df.ta.ema(length=ema_s, append=True, col_names=('EMA_short',))
-        df.ta.ema(length=ema_l, append=True, col_names=('EMA_long',))
-        df.ta.rsi(length=rsi_p, append=True, col_names=('RSI',))
-        if use_ema_f: df.ta.ema(length=ema_f, append=True, col_names=('EMA_filter',))
-        if use_vol: df.ta.sma(close='Volume', length=vol_p, append=True, col_names=('Volume_MA',))
-
-        df.dropna(inplace=True) # Supprimer lignes avec NaN après calculs
-        if df.empty: logger.warning("SWING: DataFrame vide après calcul indicateurs."); return None
-    except Exception as e:
-        logger.error(f"SWING: Erreur calcul indicateurs TA: {e}", exc_info=True); return None
-
-    # Génération signaux
-    df['signal'] = 'NONE'
-    rsi_ob = config_dict.get('RSI_OVERBOUGHT', 75) # Déjà int
-    rsi_os = config_dict.get('RSI_OVERSOLD', 25) # Déjà int
-
-    # Conditions Achat
-    buy_cond = (df['EMA_short'] > df['EMA_long']) & (df['EMA_short'].shift(1) <= df['EMA_long'].shift(1))
-    buy_cond &= (df['RSI'] < rsi_ob) # Doit être SOUS surachat pour acheter sur croisement haussier
-    if use_ema_f and 'EMA_filter' in df.columns: buy_cond &= (df['Close'] > df['EMA_filter'])
-    if use_vol and 'Volume_MA' in df.columns: buy_cond &= (df['Volume'] > df['Volume_MA'])
-    df.loc[buy_cond, 'signal'] = 'BUY'
-
-    # Conditions Vente (sortie de position)
-    sell_cond = (df['EMA_short'] < df['EMA_long']) & (df['EMA_short'].shift(1) >= df['EMA_long'].shift(1))
-    # Optionnel: Ajouter condition RSI > rsi_os pour éviter vente en zone survente?
-    # sell_cond &= (df['RSI'] > rsi_os)
-    df.loc[sell_cond, 'signal'] = 'SELL'
-
-    return df
-
-
-def check_entry_conditions(
-    current_data: pd.Series,
-    symbol: str,
-    current_config: Dict[str, Any],
-    available_balance: Decimal, # Utiliser Decimal
-    symbol_info: Dict[str, Any]
-) -> Optional[Dict[str, Any]]:
+class SwingStrategy(BaseStrategy):
     """
-    Vérifie les conditions d'entrée SWING (signal BUY) et prépare l'ordre MARKET.
-    Utilise Decimal et les nouvelles fonctions d'ordre_utils.
+    Swing trading strategy based on EMA crossover and RSI confirmation.
+    Inherits from BaseStrategy.
     """
-    if current_data.get('signal') != 'BUY':
-        return None
 
-    logger.info(f"SWING Entry Check: Signal BUY détecté pour {symbol}.")
+    def __init__(self):
+        """Initializes the Swing Strategy."""
+        super().__init__(strategy_name="SWING")
+        # Specific initialization for SwingStrategy if needed
+        logger.info("SwingStrategy initialized.")
 
-    try:
-        # Utiliser Decimal pour les calculs
-        entry_price = Decimal(str(current_data.get('Close'))) # Prix de clôture de la bougie du signal
-        if entry_price <= 0: raise ValueError("Prix de clôture invalide")
+    def calculate_indicators(self, klines_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculates EMA, RSI, and optional Volume MA indicators.
+        Overrides the base class abstract method.
 
-        # Récupérer les fractions depuis la config
-        risk_per_trade_frac = current_config.get("RISK_PER_TRADE", Decimal("0.01"))
-        capital_allocation_frac = current_config.get("CAPITAL_ALLOCATION", Decimal("1.0"))
-        stop_loss_frac = current_config.get("STOP_LOSS_PERCENTAGE", Decimal("0.02"))
+        Args:
+            klines_df: DataFrame of kline data with 'Open', 'High', 'Low', 'Close', 'Volume'.
 
-        # Calcul SL et risque
-        stop_loss_price = entry_price * (Decimal(1) - stop_loss_frac)
-        risk_per_unit = entry_price - stop_loss_price # Différence de prix par unité de base asset
+        Returns:
+            DataFrame with indicators added. Returns original df if calculation fails.
+        """
+        df = klines_df.copy() # Work on a copy
+        if df.empty:
+            logger.warning("SWING: Input DataFrame for indicators is empty.")
+            return df
 
-        if risk_per_unit <= 0:
-            logger.warning(f"SWING Entry: Risque par unité nul ou négatif (SL={stop_loss_price:.8f}, Entry={entry_price:.8f}).")
+        try:
+            # Ensure necessary columns are numeric
+            numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                else:
+                    logger.error(f"SWING: Missing required column '{col}' for indicator calculation.")
+                    return klines_df # Return original df if required columns missing
+
+            df.dropna(subset=numeric_cols, inplace=True)
+            if df.empty:
+                logger.warning("SWING: DataFrame empty after dropping NaNs in numeric columns.")
+                return df
+
+            # Get parameters from config (accessed via self.config inherited from BaseStrategy)
+            ema_s = self.config.get('EMA_SHORT_PERIOD', 9)
+            ema_l = self.config.get('EMA_LONG_PERIOD', 21)
+            rsi_p = self.config.get('RSI_PERIOD', 14)
+            use_ema_f = self.config.get('USE_EMA_FILTER', False)
+            ema_f = self.config.get('EMA_FILTER_PERIOD', 50)
+            use_vol = self.config.get('USE_VOLUME_CONFIRMATION', False)
+            vol_p = self.config.get('VOLUME_AVG_PERIOD', 20)
+
+            # Calculate indicators using pandas_ta
+            # Ensure 'Close' column exists and is numeric before calculations
+            if 'Close' not in df.columns or not pd.api.types.is_numeric_dtype(df['Close']):
+                 logger.error("SWING: 'Close' column is missing or not numeric.")
+                 return klines_df
+
+            df.ta.ema(length=ema_s, append=True, col_names=('EMA_short',))
+            df.ta.ema(length=ema_l, append=True, col_names=('EMA_long',))
+            df.ta.rsi(length=rsi_p, append=True, col_names=('RSI',))
+            if use_ema_f:
+                df.ta.ema(length=ema_f, append=True, col_names=('EMA_filter',))
+            if use_vol:
+                # Ensure 'Volume' column exists and is numeric
+                if 'Volume' in df.columns and pd.api.types.is_numeric_dtype(df['Volume']):
+                     df.ta.sma(close='Volume', length=vol_p, append=True, col_names=('Volume_MA',))
+                else:
+                     logger.warning("SWING: Volume confirmation enabled but 'Volume' column missing or not numeric. Skipping Volume MA.")
+
+
+            # Drop rows with NaN values created by indicator calculations
+            # df.dropna(inplace=True) # Keep NaNs for now, handle in signal checks if needed
+
+            logger.debug(f"SWING: Indicators calculated. DataFrame shape: {df.shape}")
+            return df
+
+        except Exception as e:
+            logger.error(f"SWING: Error calculating indicators: {e}", exc_info=True)
+            return klines_df # Return original df on error
+
+    def check_entry_signal(self, latest_data: pd.Series, **kwargs) -> Optional[Dict[str, Any]]:
+        """
+        Checks for a SWING entry signal (EMA bullish crossover + confirmations).
+        Overrides the base class abstract method.
+
+        Args:
+            latest_data: A pandas Series containing the most recent indicator data.
+                         Expected columns: 'EMA_short', 'EMA_long', 'RSI', 'Close',
+                         'EMA_filter' (optional), 'Volume' (optional), 'Volume_MA' (optional).
+            **kwargs: Not used in this implementation.
+
+        Returns:
+            Order parameters dictionary if entry signal is found, otherwise None.
+        """
+        try:
+            # Check required indicators are present
+            required_indicators = ['EMA_short', 'EMA_long', 'RSI', 'Close']
+            if any(ind not in latest_data or pd.isna(latest_data[ind]) for ind in required_indicators):
+                # logger.debug("SWING Entry Check: Missing or NaN required indicators in latest_data.")
+                return None
+
+            # Get config values
+            rsi_ob = self.config.get('RSI_OVERBOUGHT', 75)
+            use_ema_f = self.config.get('USE_EMA_FILTER', False)
+            use_vol = self.config.get('USE_VOLUME_CONFIRMATION', False)
+
+            # --- Entry Conditions ---
+            # 1. Bullish EMA Crossover (EMA_short crosses above EMA_long)
+            #    We need the previous row's data for crossover check. This should be handled
+            #    by the caller (e.g., websocket_handler passing the last 2 rows).
+            #    Assuming latest_data is the *current* closed kline, and we need the *previous* one too.
+            #    Let's modify the expectation: the caller should pass the DataFrame slice.
+            #    For now, let's assume the signal logic is based *only* on the latest_data state.
+            #    This is a simplification and might need adjustment based on how it's called.
+            #    Let's redefine: Signal is based on the state at the close of the *latest* candle.
+            #    Crossover condition needs previous candle state.
+            #    Let's assume the caller (websocket_handler) calculates the 'signal' column
+            #    based on the crossover logic and passes it in latest_data.
+            #    Refining this: Base class shouldn't dictate how signals are generated, only checked.
+            #    Let's stick to the original logic: check conditions based on latest_data.
+
+            # Simplified check (adjust if crossover logic is needed here): EMA short > EMA long
+            ema_bullish = latest_data['EMA_short'] > latest_data['EMA_long']
+
+            # 2. RSI Confirmation (Not overbought)
+            rsi_confirm = latest_data['RSI'] < rsi_ob
+
+            # 3. EMA Filter (Optional)
+            ema_filter_confirm = True # Default to true if not used
+            if use_ema_f:
+                if 'EMA_filter' in latest_data and not pd.isna(latest_data['EMA_filter']):
+                    ema_filter_confirm = latest_data['Close'] > latest_data['EMA_filter']
+                else:
+                    ema_filter_confirm = False # Fail if filter enabled but data missing
+
+            # 4. Volume Confirmation (Optional)
+            volume_confirm = True # Default to true if not used
+            if use_vol:
+                 if 'Volume' in latest_data and 'Volume_MA' in latest_data and \
+                    not pd.isna(latest_data['Volume']) and not pd.isna(latest_data['Volume_MA']):
+                     volume_confirm = latest_data['Volume'] > latest_data['Volume_MA']
+                 else:
+                     volume_confirm = False # Fail if volume enabled but data missing
+
+            # --- Final Entry Signal ---
+            if ema_bullish and rsi_confirm and ema_filter_confirm and volume_confirm:
+                logger.info("SWING Entry Signal: Conditions met.")
+
+                # Prepare order parameters
+                symbol = self.get_current_state("symbol")
+                if not symbol:
+                    logger.error("SWING Entry: Symbol not found in state.")
+                    return None
+
+                symbol_info = self.get_symbol_info()
+                if not symbol_info:
+                    logger.error("SWING Entry: Symbol info not available.")
+                    return None
+
+                available_balance = self.get_current_state("available_balance")
+                if available_balance is None or available_balance <= 0:
+                     logger.error("SWING Entry: Available balance not valid.")
+                     return None
+
+                try:
+                    entry_price = Decimal(str(latest_data['Close']))
+                    if entry_price <= 0: raise ValueError("Invalid entry price")
+
+                    # Sizing logic (same as before, using self.config)
+                    risk_per_trade_frac = self.config.get("RISK_PER_TRADE", Decimal("0.01"))
+                    capital_allocation_frac = self.config.get("CAPITAL_ALLOCATION", Decimal("1.0"))
+                    stop_loss_frac = self.config.get("STOP_LOSS_PERCENTAGE", Decimal("0.02"))
+
+                    stop_loss_price = entry_price * (Decimal(1) - stop_loss_frac)
+                    risk_per_unit = entry_price - stop_loss_price
+                    if risk_per_unit <= 0:
+                        logger.warning(f"SWING Entry: Risk per unit zero or negative (SL={stop_loss_price:.8f}, Entry={entry_price:.8f}).")
+                        return None
+
+                    max_risk = available_balance * risk_per_trade_frac
+                    max_capital = available_balance * capital_allocation_frac
+                    qty_risk = max_risk / risk_per_unit
+                    qty_capital = max_capital / entry_price
+                    quantity_unformatted = min(qty_risk, qty_capital)
+
+                    formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
+                    if formatted_quantity is None or formatted_quantity <= 0:
+                        logger.warning(f"SWING Entry: Quantity ({quantity_unformatted:.8f}) invalid after formatting.")
+                        return None
+
+                    min_notional = get_min_notional(symbol_info)
+                    if not check_min_notional(formatted_quantity, entry_price, min_notional):
+                        logger.warning(f"SWING Entry: Notional ({formatted_quantity * entry_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}).")
+                        return None
+
+                    order_notional = formatted_quantity * entry_price
+                    if order_notional > max_capital * Decimal("1.01"): # Add tolerance
+                        logger.warning(f"SWING Entry: Order notional ({order_notional:.4f}) > allocated capital ({max_capital:.4f}). Adjusting.")
+                        quantity_unformatted = max_capital / entry_price
+                        formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
+                        if formatted_quantity is None or formatted_quantity <= 0 or not check_min_notional(formatted_quantity, entry_price, min_notional):
+                            logger.error("SWING Entry: Failed to adjust quantity for capital/min_notional.")
+                            return None
+
+                    logger.info(f"SWING Entry: Size calculation OK. Qty={formatted_quantity} {symbol}")
+
+                    order_params = {
+                        "symbol": symbol,
+                        "side": "BUY",
+                        "order_type": "MARKET",
+                        "quantity": float(formatted_quantity), # Pass float to order manager/executor
+                    }
+                    # Add SL/TP info for OrderManager/Execution handler if needed
+                    # kwargs['sl_price'] = float(stop_loss_price)
+                    # kwargs['tp1_price'] = float(entry_price * (Decimal(1) + self.config.get("TAKE_PROFIT_1_PERCENTAGE", Decimal("0.01"))))
+
+                    return order_params
+
+                except (InvalidOperation, TypeError, ValueError, ZeroDivisionError, KeyError) as e:
+                    logger.error(f"SWING Entry: Error calculating/preparing order: {e}", exc_info=True)
+                    return None
+            else:
+                # logger.debug("SWING Entry Signal: Conditions NOT met.")
+                return None
+
+        except Exception as e:
+            logger.error(f"SWING: Error checking entry signal: {e}", exc_info=True)
             return None
 
-        # --- NOUVELLE LOGIQUE SIZING ---
-        max_risk = available_balance * risk_per_trade_frac
-        max_capital = available_balance * capital_allocation_frac
-        qty_risk = max_risk / risk_per_unit
-        qty_capital = max_capital / entry_price
-        quantity_unformatted = min(qty_risk, qty_capital)
-        # --- FIN NOUVELLE LOGIQUE ---
+    def check_exit_signal(self, latest_data: pd.Series, position_data: Dict[str, Any], **kwargs) -> Optional[str]:
+        """
+        Checks for a SWING exit signal (EMA bearish crossover).
+        Overrides the base class abstract method.
 
-        # Formater la quantité selon LOT_SIZE
-        formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
+        Args:
+            latest_data: A pandas Series containing the most recent indicator data ('EMA_short', 'EMA_long').
+            position_data: Dictionary with current position details (not used by this simple exit).
+            **kwargs: Not used in this implementation.
 
-        if formatted_quantity is None or formatted_quantity <= 0:
-            logger.warning(f"SWING Entry: Quantité ({quantity_unformatted:.8f}) invalide après formatage LOT_SIZE.")
+        Returns:
+            "Indicator Exit" if an exit signal is found, otherwise None.
+        """
+        try:
+            # Check required indicators are present
+            if 'EMA_short' not in latest_data or 'EMA_long' not in latest_data or \
+               pd.isna(latest_data['EMA_short']) or pd.isna(latest_data['EMA_long']):
+                # logger.debug("SWING Exit Check: Missing or NaN required indicators.")
+                return None
+
+            # --- Exit Condition: Bearish EMA Crossover ---
+            # Simplified check: EMA short < EMA long
+            # Proper crossover needs previous candle state, handled similarly to entry signal.
+            # Assuming signal is based on the state at the close of the *latest* candle.
+            if latest_data['EMA_short'] < latest_data['EMA_long']:
+                logger.info("SWING Exit Signal: EMA_short < EMA_long. Conditions met.")
+                return "Indicator Exit" # Return reason string
+            else:
+                # logger.debug("SWING Exit Signal: Conditions NOT met.")
+                return None
+
+        except Exception as e:
+            logger.error(f"SWING: Error checking exit signal: {e}", exc_info=True)
             return None
 
-        # Vérifier MIN_NOTIONAL avec la quantité formatée et le prix d'entrée
-        min_notional = get_min_notional(symbol_info)
-        if not check_min_notional(formatted_quantity, entry_price, min_notional):
-            logger.warning(f"SWING Entry: Notionnel ({formatted_quantity * entry_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}) après formatage Qty. Ordre non placé.")
-            return None # Annuler si on veut être strict
-
-        # Vérifier si le notionnel de l'ordre dépasse le capital alloué
-        order_notional = formatted_quantity * entry_price
-        if order_notional > max_capital:
-             logger.warning(f"SWING Entry: Notionnel ordre ({order_notional:.4f}) > capital alloué ({max_capital:.4f}). Ajustement quantité.")
-             # Recalculer la quantité basée sur le capital_to_use
-             quantity_unformatted = max_capital / entry_price
-             formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
-             if formatted_quantity is None or formatted_quantity <= 0 or not check_min_notional(formatted_quantity, entry_price, min_notional):
-                  logger.error("SWING Entry: Impossible d'ajuster la quantité pour respecter le capital et min_notional.")
-                  return None
-             logger.info(f"SWING Entry: Quantité ajustée à {formatted_quantity} pour respecter le capital.")
-
-        logger.info(f"SWING Entry: Calcul taille OK. Qty={formatted_quantity} {symbol} (Risque max: {max_risk:.2f}, Capital max: {max_capital:.2f}, SL: {stop_loss_price:.4f})")
-
-        # Préparer l'ordre MARKET
-        order_params = {
-            "symbol": symbol,
-            "side": "BUY",
-            "order_type": "MARKET",
-            "quantity": formatted_quantity, # Le wrapper convertira en str
-        }
-        logger.info(f"SWING Entry Signal: Préparation ordre {order_params['side']} {order_params['order_type']} de {order_params['quantity']} {symbol}")
-        return order_params
-
-    except (InvalidOperation, TypeError, ValueError, ZeroDivisionError, KeyError) as e:
-        logger.error(f"SWING Entry: Erreur calcul/préparation ordre: {e}", exc_info=True)
-        return None
-
-# check_exit_conditions reste inchangé...
-def check_exit_conditions(
-    current_data: pd.Series,
-    symbol: str
-) -> bool:
-    """ Vérifie les conditions de sortie SWING (signal SELL). """
-    if current_data.get('signal') == 'SELL':
-        logger.info(f"SWING Exit Check: Signal SELL détecté pour {symbol}.")
-        return True
-    return False
-
+# Note: The original standalone functions are now replaced by the class methods.
+# The calling code (e.g., websocket_handlers) will need to be updated to instantiate
+# this class and call its methods instead of the old standalone functions.

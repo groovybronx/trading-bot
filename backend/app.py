@@ -13,13 +13,13 @@ from dotenv import load_dotenv
 load_dotenv()
 print(">>> app.py: load_dotenv() executed.")
 
-import config
+import config  # Importer config pour les variables d'environnement
 # Importer connected_clients pour l'utiliser dans la route WS
-from websocket_utils import connected_clients # Importer le set partagé
+from utils.websocket_utils import connected_clients # Importer le set partagé
 from logging_config import setup_logging, log_queue # Importer setup_logging et log_queue
 from api_routes import api_bp
-from state_manager import state_manager
-from websocket_utils import (
+from manager.state_manager import state_manager
+from utils.websocket_utils import (
     broadcast_state_update,
     # broadcast_order_history_update, # Déjà inclus dans broadcast_state_update
 )

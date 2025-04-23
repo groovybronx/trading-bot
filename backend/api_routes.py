@@ -1,30 +1,27 @@
 # /Users/davidmichels/Desktop/trading-bot/backend/api_routes.py
 import logging
 import time
-import queue # Gardé si logging_config l'utilise
+import queue
 from flask import Blueprint, jsonify, request, Response
 from decimal import Decimal, InvalidOperation
-import collections # Pour type hinting si besoin
+import collections
 import threading
 
 # Gestionnaires et Core
-from state_manager import state_manager
-from config_manager import config_manager, VALID_TIMEFRAMES
+from manager.state_manager import state_manager
+from manager.config_manager import config_manager, VALID_TIMEFRAMES
 import bot_core
 
 # Wrapper Client Binance
 import binance_client_wrapper
 
 # Utilitaires WebSocket et Handlers
-from websocket_utils import broadcast_state_update
-import websocket_handlers # Importer pour appeler execute_exit
+from utils.websocket_utils import broadcast_state_update, broadcast_order_history_update # Import history update
+import websocket_handlers
 
-# CORRECTION: Importer les fonctions nécessaires de order_utils au niveau du module
 from utils.order_utils import format_quantity, format_price, get_min_notional, check_min_notional
 
-# Config Logging (si log_queue est utilisé)
-# from logging_config import log_queue # Décommenter si utilisé
-
+# --- MODIFIED: Import DB ---
 import db
 
 logger = logging.getLogger(__name__)
@@ -34,20 +31,25 @@ api_bp = Blueprint('api', __name__)
 
 @api_bp.route('/status')
 def get_status():
-    """Retourne l'état actuel, la config, ticker et historique."""
+    """Retourne l'état actuel, la config, ticker et historique (depuis DB)."""
     try:
         status_data = state_manager.get_state()
         excluded_keys = {'main_thread', 'websocket_client', 'keepalive_thread'}
         status_data_serializable = {k: v for k, v in status_data.items() if k not in excluded_keys}
-        # Récupérer config, ticker, historique via state_manager/config_manager
+
         status_data_serializable["config"] = config_manager.get_config()
         status_data_serializable["latest_book_ticker"] = state_manager.get_book_ticker()
-        status_data_serializable["order_history"] = state_manager.get_order_history() # Utilise la méthode get
+        # --- MODIFIED: Get history from state_manager (which gets it from DB) ---
+        strategy = status_data_serializable.get("config", {}).get("STRATEGY_TYPE")
+        status_data_serializable["order_history"] = state_manager.get_order_history(strategy=strategy)
+        # --- End Modification ---
+
         return jsonify(status_data_serializable)
     except Exception as e:
         logger.error(f"API /status: Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur interne serveur (état)."}), 500
 
+# --- /parameters GET/POST (Unchanged) ---
 @api_bp.route('/parameters', methods=['GET'])
 def get_parameters():
     """Retourne la configuration actuelle (sans clés sensibles)."""
@@ -69,12 +71,11 @@ def set_parameters():
 
     logger.info(f"API /parameters (POST): Attempting update with: {new_params}")
     try:
-        # Utilise state_manager pour mettre à jour config ET état interne si besoin
         success, message, restart_recommended = state_manager.update_config_values(new_params)
 
         if success:
             logger.info(f"API /parameters (POST): {message}")
-            broadcast_state_update() # Diffuser le nouvel état/config
+            # broadcast_state_update() # State update now saves and broadcasts
             return jsonify({"success": True, "message": message, "restart_recommended": restart_recommended})
         else:
             logger.error(f"API /parameters (POST): Validation/Update failed: {message}")
@@ -84,6 +85,7 @@ def set_parameters():
         logger.error(f"API /parameters (POST): Unexpected error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur interne serveur (MAJ params)."}), 500
 
+# --- /start, /stop (Unchanged) ---
 @api_bp.route('/start', methods=['POST'])
 def start_bot_route():
     """Démarre le bot."""
@@ -91,13 +93,13 @@ def start_bot_route():
     try:
         success, message = bot_core.start_bot_core()
         status_code = 200 if success else 500
-        if not success and "déjà" in message.lower(): status_code = 400 # Bad request si déjà démarré
+        if not success and "déjà" in message.lower(): status_code = 400
         return jsonify({"success": success, "message": message}), status_code
     except Exception as e:
         logger.error(f"API /start: Unexpected error: {e}", exc_info=True)
         try:
             state_manager.update_state({"status": "ERROR"})
-            broadcast_state_update()
+            # broadcast_state_update() # State update now saves and broadcasts
         except Exception as inner_e: logger.error(f"API /start: Error updating/broadcasting after exception: {inner_e}")
         return jsonify({"success": False, "message": "Erreur interne serveur (démarrage)."}), 500
 
@@ -109,27 +111,31 @@ def stop_bot_route():
         result = bot_core.stop_bot_core()
         if result is None: result = (False, "Erreur: stop_bot_core returned None.")
         success, message = result
-        status_code = 200 if success else 400 # Bad request si déjà arrêté?
+        status_code = 200 if success else 400
         return jsonify({"success": success, "message": message}), status_code
     except Exception as e:
         logger.error(f"API /stop: Unexpected error: {e}", exc_info=True)
         try:
             state_manager.update_state({"status": "ERROR"})
-            broadcast_state_update()
+            # broadcast_state_update() # State update now saves and broadcasts
         except Exception as inner_e: logger.error(f"API /stop: Error updating/broadcasting after exception: {inner_e}")
         return jsonify({"success": False, "message": "Erreur interne serveur (arrêt)."}), 500
 
+# --- MODIFIED: /order_history ---
 @api_bp.route('/order_history')
 def get_order_history():
-    """Retourne l'historique des ordres, filtré par stratégie si précisé."""
+    """Retourne l'historique des ordres depuis la DB, filtré par stratégie si précisé."""
     try:
-        strategy = request.args.get('strategy')
-        history = state_manager.get_order_history(strategy)
+        strategy = request.args.get('strategy') # Optional filter
+        limit = request.args.get('limit', default=100, type=int) # Optional limit
+        # Get history via state_manager which calls db.get_order_history
+        history = state_manager.get_order_history(strategy=strategy, limit=limit)
         return jsonify(history)
     except Exception as e:
         logger.error(f"API /order_history: Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur interne serveur (historique)."}), 500
 
+# --- /manual_exit, /place_order (Unchanged logic, but state updates broadcast automatically) ---
 @api_bp.route('/manual_exit', methods=['POST'])
 def manual_exit_route():
     """Déclenche une sortie manuelle."""
@@ -139,7 +145,6 @@ def manual_exit_route():
              return jsonify({"success": False, "message": "Le bot n'est pas en position."}), 400
 
         logger.warning("API /manual_exit: Triggering manual exit via API...")
-        # Appelle execute_exit du handler dans un thread pour ne pas bloquer la réponse API
         threading.Thread(target=websocket_handlers.execute_exit, args=("Sortie Manuelle API",), daemon=True).start()
         return jsonify({"success": True, "message": "Requête de sortie manuelle initiée."}), 202 # Accepted
     except Exception as e:
@@ -156,7 +161,6 @@ def handle_place_order():
         logger.error("API /place_order: No JSON data received.")
         return jsonify({"success": False, "message": "Requête invalide (JSON manquant)."}), 400
 
-    # Clés requises de base
     required_keys = ["symbol", "side", "order_type"]
     if not all(key in data for key in required_keys):
         missing = [key for key in required_keys if key not in data]
@@ -166,7 +170,6 @@ def handle_place_order():
     order_type = data["order_type"].upper()
     side = data["side"].upper()
 
-    # Préparer les paramètres, vérifier les clés spécifiques au type
     order_params = {
         "symbol": data["symbol"],
         "side": side,
@@ -178,7 +181,7 @@ def handle_place_order():
             if side == "BUY":
                 if "quoteOrderQty" in data:
                     order_params["quoteOrderQty"] = Decimal(str(data["quoteOrderQty"]))
-                elif "quantity" in data: # Permettre achat MARKET par quantité base aussi
+                elif "quantity" in data:
                     order_params["quantity"] = Decimal(str(data["quantity"]))
                 else:
                     raise ValueError("MARKET BUY requires 'quoteOrderQty' or 'quantity'.")
@@ -194,54 +197,45 @@ def handle_place_order():
             if "time_in_force" in data:
                 order_params["time_in_force"] = data["time_in_force"]
         else:
-            # Ajouter d'autres types si nécessaire (STOP_LOSS_LIMIT, etc.)
             raise ValueError(f"Order type '{order_type}' not supported by this API endpoint.")
 
-        # --- Validation et Formatage avant appel API ---
         symbol_info = binance_client_wrapper.get_symbol_info(order_params["symbol"])
         if not symbol_info:
             raise ValueError(f"Cannot get symbol info for {order_params['symbol']}")
 
-        # CORRECTION: Utiliser get_min_notional importé
         min_notional = get_min_notional(symbol_info)
 
-        # Formater quantité et prix si nécessaire (en utilisant les fonctions importées)
         if "quantity" in order_params:
             formatted_qty = format_quantity(order_params["quantity"], symbol_info)
             if formatted_qty is None:
                 raise ValueError(f"Invalid quantity after formatting: {order_params['quantity']}")
-            order_params["quantity"] = formatted_qty # Utiliser la quantité formatée
+            order_params["quantity"] = formatted_qty
 
-        if "price" in order_params: # Pour LIMIT
+        if "price" in order_params:
             formatted_price = format_price(order_params["price"], symbol_info)
             if formatted_price is None:
                 raise ValueError(f"Invalid price after formatting: {order_params['price']}")
-            order_params["price"] = formatted_price # Utiliser le prix formaté
+            order_params["price"] = formatted_price
 
-        # Vérifier Min Notional (en utilisant check_min_notional importé)
-        check_price = order_params.get("price") # Prix LIMIT
-        if not check_price and order_type == "MARKET": # Estimer prix pour MARKET
+        check_price = order_params.get("price")
+        if not check_price and order_type == "MARKET":
              ticker = binance_client_wrapper.get_symbol_ticker(order_params["symbol"])
-             if ticker and ticker.get("price"):
-                  check_price = Decimal(ticker["price"])
+             if ticker and ticker.get("price"): check_price = Decimal(ticker["price"])
              else: logger.warning("Cannot check minNotional for MARKET order, price unavailable.")
 
         if "quantity" in order_params and check_price:
              if not check_min_notional(order_params["quantity"], check_price, min_notional):
                   raise ValueError(f"Order does not meet MIN_NOTIONAL ({min_notional}). Estimated: {order_params['quantity'] * check_price:.4f}")
-        elif "quoteOrderQty" in order_params: # Pour MARKET BUY par quote
+        elif "quoteOrderQty" in order_params:
              if order_params["quoteOrderQty"] < min_notional:
                   raise ValueError(f"quoteOrderQty ({order_params['quoteOrderQty']}) is less than MIN_NOTIONAL ({min_notional}).")
 
-        # --- Fin Validation et Formatage ---
-
         logger.info(f"API /place_order: Placing validated order via wrapper: {order_params}")
-        # Lancer dans un thread pour ne pas bloquer la réponse API trop longtemps
         threading.Thread(target=websocket_handlers._execute_order_thread,
-                         args=(order_params.copy(), "MANUAL_API"), # Utiliser une copie
+                         args=(order_params.copy(), "MANUAL_API"),
                          daemon=True).start()
 
-        return jsonify({"success": True, "message": f"Requête d'ordre {order_type} {side} envoyée (traitement asynchrone)."}), 202 # Accepted
+        return jsonify({"success": True, "message": f"Requête d'ordre {order_type} {side} envoyée (traitement asynchrone)."}), 202
 
     except (ValueError, InvalidOperation, TypeError) as e:
         logger.error(f"API /place_order: Validation Error: {e}")
@@ -250,63 +244,46 @@ def handle_place_order():
         logger.exception("API /place_order: Unexpected error during preparation or sending.")
         return jsonify({"success": False, "message": f"Erreur interne serveur: {e}"}), 500
 
+# --- MODIFIED: /reset ---
 @api_bp.route('/reset', methods=['POST'])
 def reset_bot():
-    """Réinitialise l’historique des ordres pour la stratégie sélectionnée."""
+    """Réinitialise l’historique des ordres dans la DB pour la stratégie sélectionnée."""
     try:
         data = request.get_json() or {}
-        strategy = data.get('strategy') or state_manager.get_state('strategy') or 'SCALPING'
-        db.reset_orders(strategy)
-        state_manager.clear_order_history()  # Ajout : efface aussi l'historique en mémoire
-        logger.info(f"API /reset: Historique des ordres réinitialisé pour la stratégie {strategy}.")
-        broadcast_state_update()
-        return jsonify({"success": True, "message": f"Historique réinitialisé pour {strategy}."})
+        # Determine strategy: from request, or current state, or default
+        strategy = data.get('strategy') or state_manager.get_state('strategy') or config_manager.get_value('STRATEGY_TYPE', 'SCALPING')
+
+        # Call DB reset
+        reset_success = db.reset_orders(strategy)
+
+        if reset_success:
+            logger.info(f"API /reset: Historique des ordres réinitialisé dans la DB pour la stratégie {strategy}.")
+            # Broadcast the (now empty) history
+            broadcast_order_history_update()
+            return jsonify({"success": True, "message": f"Historique réinitialisé pour {strategy}."})
+        else:
+            logger.error(f"API /reset: Failed to reset history in DB for strategy {strategy}.")
+            return jsonify({"success": False, "message": f"Erreur lors du reset pour {strategy}."}), 500
+
     except Exception as e:
         logger.error(f"API /reset: Error: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Erreur lors du reset."}), 500
+        return jsonify({"success": False, "message": "Erreur interne lors du reset."}), 500
 
+# --- MODIFIED: /stats ---
 @api_bp.route('/stats')
 def get_stats():
-    """Retourne les statistiques pour la stratégie sélectionnée (calculées sur l'historique filtré)."""
+    """Retourne les statistiques depuis la DB pour la stratégie sélectionnée."""
     try:
-        strategy = request.args.get('strategy') or state_manager.get_state('strategy') or 'SCALPING'
-        history = state_manager.get_order_history(strategy)
-        total = len(history)
-        wins = 0
-        losses = 0
-        pnl = Decimal('0')
-        pnl_sum = Decimal('0')
-        pnl_count = 0
-        for order in history:
-            if order.get('side') == 'SELL' and order.get('status') == 'FILLED':
-                perf = order.get('performance_pct')
-                if perf:
-                    try:
-                        perf_val = Decimal(perf.replace('%','')) / 100 if '%' in str(perf) else Decimal(perf)
-                        pnl += perf_val
-                        pnl_sum += perf_val
-                        pnl_count += 1
-                        if perf_val > 0:
-                            wins += 1
-                        else:
-                            losses += 1
-                    except Exception:
-                        pass
-        winrate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
-        avg_pnl = (pnl_sum / pnl_count * 100) if pnl_count > 0 else Decimal('0')
-        stats = {
-            'total_trades': total,
-            'wins': wins,
-            'losses': losses,
-            'winrate': round(winrate, 2),
-            'pnl_percent': round(pnl * 100, 2),
-            'roi': round(pnl * 100, 2), # Ajouté pour compatibilité frontend
-            'avg_pnl': round(avg_pnl, 2) # Ajouté pour compatibilité frontend
-        }
+        # Determine strategy: from request arg, or current state, or default
+        strategy = request.args.get('strategy') or state_manager.get_state('strategy') or config_manager.get_value('STRATEGY_TYPE', 'SCALPING')
+
+        # Call db.get_stats directly
+        stats = db.get_stats(strategy)
+
         return jsonify(stats)
     except Exception as e:
         logger.error(f"API /stats: Error: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Erreur lors du calcul des stats."}), 500
+        return jsonify({"success": False, "message": "Erreur lors du calcul des stats depuis la DB."}), 500
 
 # Exporter le Blueprint
 __all__ = ['api_bp']
