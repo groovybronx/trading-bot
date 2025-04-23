@@ -144,15 +144,22 @@ class ScalpingStrategy2(BaseStrategy):
              logger.error(f"SCALPING2 Indicators: Missing one or more required columns: {required_cols}")
              return klines_df
 
-        # Ensure columns are numeric
+        # Ensure columns are numeric, attempting conversion if necessary
         for col in required_cols:
-             if not pd.api.types.is_numeric_dtype(df[col]):
-                  logger.warning(f"SCALPING2 Indicators: Column '{col}' is not numeric. Attempting conversion.")
-                  df[col] = pd.to_numeric(df[col], errors='coerce')
-                  if not pd.api.types.is_numeric_dtype(df[col]):
-                       logger.error(f"SCALPING2 Indicators: Failed to convert '{col}' to numeric.")
-                       return klines_df
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                original_type = df[col].dtype
+                logger.debug(f"SCALPING2 Indicators: Column '{col}' is not numeric (type: {original_type}). Attempting conversion.")
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                # Check if conversion failed (column is still not numeric)
+                if not pd.api.types.is_numeric_dtype(df[col]):
+                    logger.error(f"SCALPING2 Indicators: Failed to convert column '{col}' (original type: {original_type}) to numeric. Check data source.")
+                    # Return original df as we can't proceed reliably
+                    return klines_df
+                else:
+                    logger.debug(f"SCALPING2 Indicators: Column '{col}' successfully converted to numeric.")
+            # If already numeric, do nothing.
 
+        # Drop rows where essential numeric columns ended up as NaN after conversion
         df.dropna(subset=required_cols, inplace=True)
         if df.empty:
              logger.warning("SCALPING2: DataFrame empty after dropping NaNs in essential columns.")

@@ -29,8 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Parameter Inputs
     const strategySelector = document.getElementById('param-strategy-type');
     const swingParamsDiv = document.getElementById('swing-params');
-    const scalpingParamsDiv = document.getElementById('scalping-params'); // Div pour les params communs Scalping/Scalping2
-    const scalpingSpecificParamsDiv = document.getElementById('scalping-specific-params'); // Div pour params spécifiques Scalping (Order Book)
+    const scalpingOrderBookParamsDiv = document.getElementById('scalping-params'); // Points to the SCALPING (Order Book) specific params div
     const scalping2SpecificParamsDiv = document.getElementById('scalping2-specific-params'); // Div pour params spécifiques Scalping2 (Indicateurs)
     const timeframeRelevance = document.getElementById('timeframe-relevance');
 
@@ -42,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const paramTp2 = document.getElementById('param-tp2');
     const paramTrailing = document.getElementById('param-trailing');
     const paramTimeStop = document.getElementById('param-time-stop');
+    const paramOrderCooldown = document.getElementById('param-order-cooldown'); // Moved to common
 
     // SWING Params
     const paramTimeframe = document.getElementById('param-timeframe');
@@ -74,15 +74,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const paramBbPeriod = document.getElementById('param-bb-period');
     const paramBbStd = document.getElementById('param-bb-std');
     const paramVolMa = document.getElementById('param-vol-ma'); // Volume MA pour Scalping2
-    const paramOrderCooldown = document.getElementById('param-order-cooldown');
 
     let ws = null; // WebSocket connection
+    let lastKnownState = null; // Variable pour stocker le dernier état reçu
 
     // === INIT FUNCTION ===
     function init() {
         // Initialisation de l’UI, listeners, WebSocket, etc.
-        // Ex: DOM.saveParamsBtn.addEventListener('click', ...)
-        // Ex: API.getStatus().then(updateUI)
     }
 
     document.addEventListener('DOMContentLoaded', init);
@@ -92,28 +90,33 @@ document.addEventListener('DOMContentLoaded', () => {
         updateUI: function(state) {
             if (!state) {
                 console.warn("updateUI called with null or undefined state");
+                return; // Ne pas mettre à jour lastKnownState si l'état est invalide
+            }
+            lastKnownState = state; // Stocker le dernier état valide reçu
+            if (!state.config) { // Vérifier si config existe après avoir stocké l'état
+                console.warn("State received without config object. Cannot update parameters.");
                 return;
             }
 
             // Update Bot Status section - vérifier existence éléments
             if (statusValue) statusValue.textContent = state.status || 'Inconnu';
-            if (statusValue) statusValue.className = `status-${(state.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`; // Gérer espaces potentiels
+            if (statusValue) statusValue.className = `status-${(state.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`;
             if (strategyTypeValueSpan) strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
             if (symbolValue) symbolValue.textContent = state.symbol || 'N/A';
             if (timeframeValue) timeframeValue.textContent = state.timeframe || 'N/A';
             if (quoteAssetLabel) quoteAssetLabel.textContent = state.quote_asset || 'USDT';
             if (baseAssetLabel) baseAssetLabel.textContent = state.base_asset || 'N/A';
             if (symbolPriceLabel) symbolPriceLabel.textContent = state.symbol ? `${state.symbol} / ${state.quote_asset || 'USDT'}` : 'N/A';
-            if (balanceValue) balanceValue.textContent = formatNumber(state.available_balance, 2); // Précision 2 pour quote
-            if (quantityValue) quantityValue.textContent = formatNumber(state.symbol_quantity, 8); // Précision 8 pour base
+            if (balanceValue) balanceValue.textContent = formatNumber(state.available_balance, 2);
+            if (quantityValue) quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
 
             // Update Position Status
             if (positionValue) {
                 if (state.in_position && state.entry_details) {
-                    const entryPrice = formatNumber(state.entry_details.avg_price, 2); // Précision 2 pour prix entrée
-                    const entryQty = formatNumber(state.entry_details.quantity, 8); // Précision 8 pour quantité
+                    const entryPrice = formatNumber(state.entry_details.avg_price, 2);
+                    const entryQty = formatNumber(state.entry_details.quantity, 8);
                     positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
-                    positionValue.className = 'status-running'; // Ou une classe spécifique 'in-position'
+                    positionValue.className = 'status-running';
                 } else {
                     positionValue.textContent = 'Aucune';
                     positionValue.className = '';
@@ -124,75 +127,83 @@ document.addEventListener('DOMContentLoaded', () => {
             if (startBotBtn) startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING' || state.status === 'STOPPING';
             if (stopBotBtn) stopBotBtn.disabled = state.status !== 'RUNNING';
 
-            // Update Parameter Inputs if config exists
-            if (state.config) {
-                // Strategy selector and visibility
-                const currentStrategy = state.config.STRATEGY_TYPE || 'SWING'; // Default to SWING if missing
-                if (strategySelector) {
-                    strategySelector.value = currentStrategy;
-                    UI.updateParameterVisibility(currentStrategy); // Gère la visibilité
-                }
+            // Update Parameter Inputs
+            const currentStrategy = state.config.STRATEGY_TYPE || 'SWING';
+            if (strategySelector) {
+                strategySelector.value = currentStrategy;
+                UI.updateParameterVisibility(currentStrategy); // Gère la visibilité
+            }
+            // Appeler la fonction pour remplir les paramètres
+            UI.fillParameters(state.config, currentStrategy);
 
-                // Helper function to convert backend fractions to frontend percentages
-                const toPercent = (value) => (value !== null && value !== undefined && !isNaN(parseFloat(value))) ? (parseFloat(value) * 100).toString() : '';
+            // Update Order History (if included in state)
+             if (state.order_history) {
+                 UI.updateOrderHistory(state.order_history);
+             }
+             // Update Price Display
+             UI.updatePriceDisplay(state.latest_book_ticker);
+        },
 
-                // Common Params (Risk/Capital/Exit/Cooldown) - TOUJOURS REMPLIS
-                if (paramRisk) paramRisk.value = toPercent(state.config.RISK_PER_TRADE);
-                if (paramCapitalAllocation) paramCapitalAllocation.value = toPercent(state.config.CAPITAL_ALLOCATION);
-                if (paramSl) paramSl.value = toPercent(state.config.STOP_LOSS_PERCENTAGE);
-                if (paramTp1) paramTp1.value = toPercent(state.config.TAKE_PROFIT_1_PERCENTAGE);
-                if (paramTp2) paramTp2.value = toPercent(state.config.TAKE_PROFIT_2_PERCENTAGE);
-                if (paramTrailing) paramTrailing.value = toPercent(state.config.TRAILING_STOP_PERCENTAGE);
-                if (paramTimeStop) paramTimeStop.value = state.config.TIME_STOP_MINUTES ?? '';
-                if (paramOrderCooldown) paramOrderCooldown.value = state.config.ORDER_COOLDOWN_MS ?? ''; // Cooldown est commun
+        // Fonction pour remplir les champs de paramètres
+        fillParameters: function(config, strategyToFill) {
+            if (!config) {
+                console.warn("fillParameters called without config object.");
+                return;
+            }
 
-                // SWING Params - Remplir SEULEMENT si SWING est sélectionné
-                if (currentStrategy === 'SWING') {
-                    if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME || '1m';
-                    if (paramEmaShort) paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
-                    if (paramEmaLong) paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
-                    if (paramEmaFilter) paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
-                    if (paramRsiPeriod) paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
-                    if (paramRsiOb) paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
-                    if (paramRsiOs) paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
-                    if (paramVolumeAvg) paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
-                    if (paramUseEmaFilter) paramUseEmaFilter.checked = state.config.USE_EMA_FILTER ?? false;
-                    if (paramUseVolume) paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION ?? false;
-                }
+            // Helper function to convert backend fractions to frontend percentages
+            const toPercent = (value) => (value !== null && value !== undefined && !isNaN(parseFloat(value))) ? (parseFloat(value) * 100).toString() : '';
 
-                // SCALPING (Order Book) Specific Params - Remplir SEULEMENT si SCALPING est sélectionné
-                if (currentStrategy === 'SCALPING') {
-                    if(paramScalpingOrderType) paramScalpingOrderType.value = state.config.SCALPING_ORDER_TYPE || 'MARKET';
-                    if(paramScalpingLimitTif) paramScalpingLimitTif.value = state.config.SCALPING_LIMIT_TIF || 'GTC';
-                    if(paramScalpingLimitTimeout) paramScalpingLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
-                    if(paramScalpingDepthLevels) paramScalpingDepthLevels.value = state.config.SCALPING_DEPTH_LEVELS || '5';
-                    if(paramScalpingDepthSpeed) paramScalpingDepthSpeed.value = state.config.SCALPING_DEPTH_SPEED || '1000ms';
-                    // Pour les seuils, afficher la valeur brute (fraction ou nombre)
-                    if(paramScalpingSpreadThreshold) paramScalpingSpreadThreshold.value = state.config.SCALPING_SPREAD_THRESHOLD ?? '';
-                    if(paramScalpingImbalanceThreshold) paramScalpingImbalanceThreshold.value = state.config.SCALPING_IMBALANCE_THRESHOLD ?? '';
-                    // paramOrderCooldown est maintenant dans les communs
-                }
+            // Common Params (Risk/Capital/Exit/Cooldown) - TOUJOURS REMPLIS
+            if (paramRisk) paramRisk.value = toPercent(config.RISK_PER_TRADE);
+            if (paramCapitalAllocation) paramCapitalAllocation.value = toPercent(config.CAPITAL_ALLOCATION);
+            if (paramSl) paramSl.value = toPercent(config.STOP_LOSS_PERCENTAGE);
+            if (paramTp1) paramTp1.value = toPercent(config.TAKE_PROFIT_1_PERCENTAGE);
+            if (paramTp2) paramTp2.value = toPercent(config.TAKE_PROFIT_2_PERCENTAGE);
+            if (paramTrailing) paramTrailing.value = toPercent(config.TRAILING_STOP_PERCENTAGE);
+            if (paramTimeStop) paramTimeStop.value = config.TIME_STOP_MINUTES ?? '';
+            if (paramOrderCooldown) paramOrderCooldown.value = config.ORDER_COOLDOWN_MS ?? '';
 
-                // SCALPING 2 (Indicators) Specific Params - Remplir SEULEMENT si SCALPING2 est sélectionné
-                if (currentStrategy === 'SCALPING2') {
-                    if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME || '1m'; // Timeframe pertinent aussi
-                    if (paramSupertrendAtr) paramSupertrendAtr.value = state.config.SUPERTREND_ATR_PERIOD ?? '';
-                    if (paramSupertrendMult) paramSupertrendMult.value = state.config.SUPERTREND_ATR_MULTIPLIER ?? '';
-                    if (paramRsiPeriodScalp) paramRsiPeriodScalp.value = state.config.SCALPING_RSI_PERIOD ?? '';
-                    if (paramStochK) paramStochK.value = state.config.STOCH_K_PERIOD ?? '';
-                    if (paramStochD) paramStochD.value = state.config.STOCH_D_PERIOD ?? '';
-                    if (paramStochSmooth) paramStochSmooth.value = state.config.STOCH_SMOOTH ?? '';
-                    if (paramBbPeriod) paramBbPeriod.value = state.config.BB_PERIOD ?? '';
-                    if (paramBbStd) paramBbStd.value = state.config.BB_STD ?? '';
-                    if (paramVolMa) paramVolMa.value = state.config.VOLUME_MA_PERIOD ?? ''; // Volume MA pour Scalping2
-                    // paramOrderCooldown est maintenant dans les communs
-                }
+            // SWING Params - Remplir SEULEMENT si SWING est la stratégie à remplir
+            if (strategyToFill === 'SWING') {
+                if (paramTimeframe) paramTimeframe.value = config.TIMEFRAME || '1m';
+                if (paramEmaShort) paramEmaShort.value = config.EMA_SHORT_PERIOD ?? '';
+                if (paramEmaLong) paramEmaLong.value = config.EMA_LONG_PERIOD ?? '';
+                if (paramEmaFilter) paramEmaFilter.value = config.EMA_FILTER_PERIOD ?? '';
+                if (paramRsiPeriod) paramRsiPeriod.value = config.RSI_PERIOD ?? '';
+                if (paramRsiOb) paramRsiOb.value = config.RSI_OVERBOUGHT ?? '';
+                if (paramRsiOs) paramRsiOs.value = config.RSI_OVERSOLD ?? '';
+                if (paramVolumeAvg) paramVolumeAvg.value = config.VOLUME_AVG_PERIOD ?? '';
+                if (paramUseEmaFilter) paramUseEmaFilter.checked = config.USE_EMA_FILTER ?? false;
+                if (paramUseVolume) paramUseVolume.checked = config.USE_VOLUME_CONFIRMATION ?? false;
+            }
 
-            } else {
-                console.warn("State received without config object. Cannot update parameters.");
-                // Optionnel: Vider les champs de paramètres ou afficher un message
+            // SCALPING (Order Book) Specific Params - Remplir SEULEMENT si SCALPING est la stratégie à remplir
+            if (strategyToFill === 'SCALPING') {
+                if(paramScalpingOrderType) paramScalpingOrderType.value = config.SCALPING_ORDER_TYPE || 'MARKET';
+                if(paramScalpingLimitTif) paramScalpingLimitTif.value = config.SCALPING_LIMIT_TIF || 'GTC';
+                if(paramScalpingLimitTimeout) paramScalpingLimitTimeout.value = config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
+                if(paramScalpingDepthLevels) paramScalpingDepthLevels.value = config.SCALPING_DEPTH_LEVELS || '5';
+                if(paramScalpingDepthSpeed) paramScalpingDepthSpeed.value = config.SCALPING_DEPTH_SPEED || '1000ms';
+                if(paramScalpingSpreadThreshold) paramScalpingSpreadThreshold.value = config.SCALPING_SPREAD_THRESHOLD ?? '';
+                if(paramScalpingImbalanceThreshold) paramScalpingImbalanceThreshold.value = config.SCALPING_IMBALANCE_THRESHOLD ?? '';
+            }
+
+            // SCALPING 2 (Indicators) Specific Params - Remplir SEULEMENT si SCALPING2 est la stratégie à remplir
+            if (strategyToFill === 'SCALPING2') {
+                if (paramTimeframe) paramTimeframe.value = config.TIMEFRAME || '1m'; // Timeframe pertinent aussi
+                if (paramSupertrendAtr) paramSupertrendAtr.value = config.SUPERTREND_ATR_PERIOD ?? '';
+                if (paramSupertrendMult) paramSupertrendMult.value = config.SUPERTREND_ATR_MULTIPLIER ?? '';
+                if (paramRsiPeriodScalp) paramRsiPeriodScalp.value = config.SCALPING_RSI_PERIOD ?? '';
+                if (paramStochK) paramStochK.value = config.STOCH_K_PERIOD ?? '';
+                if (paramStochD) paramStochD.value = config.STOCH_D_PERIOD ?? '';
+                if (paramStochSmooth) paramStochSmooth.value = config.STOCH_SMOOTH ?? '';
+                if (paramBbPeriod) paramBbPeriod.value = config.BB_PERIOD ?? '';
+                if (paramBbStd) paramBbStd.value = config.BB_STD ?? '';
+                if (paramVolMa) paramVolMa.value = config.VOLUME_MA_PERIOD ?? '';
             }
         },
+
         updateOrderHistory: function(history) {
             if (!orderHistoryBody) {
                 console.error("Order history table body not found!");
@@ -200,79 +211,63 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             orderHistoryBody.innerHTML = ''; // Vider le contenu actuel
 
-            // console.log("Updating order history table with data:", history); // Garder commenté sauf pour debug
-
             if (!Array.isArray(history) || history.length === 0) {
-                if (orderHistoryPlaceholder && 'content' in orderHistoryPlaceholder) { // Vérifier si c'est un template
+                if (orderHistoryPlaceholder && 'content' in orderHistoryPlaceholder) {
                      try {
                         const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true);
                         orderHistoryBody.appendChild(placeholderClone);
                     } catch (e) {
-                        console.error("Error fetching and displaying order history:", e);
-                        console.error("Error fetching and displaying order history:", e);
                          console.error("Error using order history placeholder template:", e);
-                         // Fallback si le template échoue
                          const row = orderHistoryBody.insertRow();
                          const cell = row.insertCell();
-                         cell.colSpan = 12; // Ajuster selon le nombre de colonnes
+                         cell.colSpan = 12;
                          cell.textContent = "Aucun ordre dans l'historique.";
                          cell.style.textAlign = 'center';
                      }
                 } else {
-                     // Fallback si l'élément placeholder n'est pas un template
                      const row = orderHistoryBody.insertRow();
                      const cell = row.insertCell();
-                     cell.colSpan = 12; // Ajuster selon le nombre de colonnes
+                     cell.colSpan = 12;
                      cell.textContent = "Aucun ordre dans l'historique.";
                      cell.style.textAlign = 'center';
                 }
                 return;
             }
 
-            // Trier l'historique par timestamp décroissant (le plus récent en premier)
-            // Assurer que les timestamps sont bien des nombres pour le tri
             history.sort((a, b) => (parseInt(b.timestamp || 0)) - (parseInt(a.timestamp || 0)));
 
             history.forEach(order => {
-                const row = document.createElement('tr'); // Créer une nouvelle ligne
+                const row = document.createElement('tr');
 
-                // Performance Pct - Gérer null/undefined et formater
-                const performancePctValue = order.performance_pct; // Peut être string "x.xx%" ou null
+                const performancePctValue = order.performance_pct;
                 let performancePctText = '-';
                 let perfClass = '';
                 if (performancePctValue !== null && performancePctValue !== undefined) {
-                    // Si c'est déjà un string formaté en %, l'utiliser directement
                     if (typeof performancePctValue === 'string' && performancePctValue.includes('%')) {
                         performancePctText = performancePctValue;
-                        // Essayer d'extraire la valeur numérique pour la classe CSS
                         const numericPerf = parseFloat(performancePctValue.replace('%', ''));
                         if (!isNaN(numericPerf)) {
                             perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
                         }
                     } else {
-                        // Sinon, essayer de convertir en nombre et formater
                         const numericPerf = parseFloat(performancePctValue);
                         if (!isNaN(numericPerf)) {
-                            performancePctText = `${formatNumber(numericPerf * 100, 2)}%`; // Multiplier par 100 si c'est une fraction
+                            performancePctText = `${formatNumber(numericPerf * 100, 2)}%`;
                             perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
                         }
                     }
                 }
 
-
-                // Calculer Avg Price si nécessaire (pour ordres MARKET)
-                let avgPrice = order.price; // Prix de l'ordre (pour LIMIT)
+                let avgPrice = order.price;
                 const executedQtyNum = parseFloat(order.executedQty || 0);
                 const cummQuoteQtyNum = parseFloat(order.cummulativeQuoteQty || 0);
 
-                // Si prix est 0 ou invalide, et que l'ordre a été exécuté, calculer le prix moyen
                 if ((!avgPrice || parseFloat(avgPrice) === 0) && cummQuoteQtyNum > 0 && executedQtyNum > 0) {
                     avgPrice = cummQuoteQtyNum / executedQtyNum;
                 }
 
-                const priceOrValueText = formatNumber(avgPrice, 4); // Formater le prix (calculé ou direct)
+                const priceOrValueText = formatNumber(avgPrice, 4);
 
-                // Valeur en quote asset
                 let quoteValue = '-';
                 if (!isNaN(cummQuoteQtyNum) && cummQuoteQtyNum > 0) {
                     quoteValue = formatNumber(cummQuoteQtyNum, 2);
@@ -280,10 +275,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     quoteValue = formatNumber(executedQtyNum * avgPrice, 2);
                 }
 
-                // Classe CSS pour BUY/SELL
                 const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
 
-                // Remplir la ligne
                 row.innerHTML = `
                     <td>${formatTimestamp(order.timestamp)}</td>
                     <td>${order.symbol || 'N/A'}</td>
@@ -298,35 +291,33 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="${perfClass}">${performancePctText}</td>
                     <td>${order.orderId || 'N/A'}</td>
                 `;
-                orderHistoryBody.appendChild(row); // Ajouter la ligne au tbody
+                orderHistoryBody.appendChild(row);
             });
         },
         updateParameterVisibility: function(selectedStrategy) {
-            // Cacher tout par défaut, mais vérifier si l'élément existe avant
+            // Cacher toutes les sections spécifiques par défaut
             if (swingParamsDiv) swingParamsDiv.style.display = 'none';
-            if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'none'; // Contient les params communs SL/TP etc.
-            if (scalpingSpecificParamsDiv) scalpingSpecificParamsDiv.style.display = 'none';
-            if (scalping2SpecificParamsDiv) scalping2SpecificParamsDiv.style.display = 'none';
+            if (scalpingOrderBookParamsDiv) scalpingOrderBookParamsDiv.style.display = 'none'; // Cache la section spécifique SCALPING (Order Book)
+            if (scalping2SpecificParamsDiv) scalping2SpecificParamsDiv.style.display = 'none'; // Cache la section spécifique SCALPING2 (Indicateurs)
 
-            // Désactiver/Réactiver Timeframe - Vérifier si l'élément existe
-            if (paramTimeframe) paramTimeframe.disabled = false; // Réactiver par défaut
-            if (timeframeRelevance) timeframeRelevance.textContent = ''; // Effacer par défaut
+            // Réactiver Timeframe par défaut et effacer la note de pertinence
+            if (paramTimeframe) paramTimeframe.disabled = false;
+            if (timeframeRelevance) timeframeRelevance.textContent = '';
 
+            // Afficher la section spécifique correspondante et ajuster Timeframe/note
             if (selectedStrategy === 'SWING') {
                 if (swingParamsDiv) swingParamsDiv.style.display = 'block';
-                if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'none'; // Afficher SL/TP etc.
                 if (timeframeRelevance) timeframeRelevance.textContent = '(Pertinent pour SWING)';
             } else if (selectedStrategy === 'SCALPING') {
-                if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'block'; // Afficher SL/TP etc.
-                if (scalpingSpecificParamsDiv) scalpingSpecificParamsDiv.style.display = 'block';
-                if (paramTimeframe) paramTimeframe.disabled = true;
+                if (scalpingOrderBookParamsDiv) scalpingOrderBookParamsDiv.style.display = 'block'; // Affiche la section spécifique SCALPING (Order Book)
+                if (paramTimeframe) paramTimeframe.disabled = true; // Désactive Timeframe
                 if (timeframeRelevance) timeframeRelevance.textContent = '(Non pertinent pour SCALPING)';
             } else if (selectedStrategy === 'SCALPING2') {
-                if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'block'; // Afficher SL/TP etc.
-                if (scalping2SpecificParamsDiv) scalping2SpecificParamsDiv.style.display = 'block';
-                // Timeframe est pertinent pour SCALPING2, donc on ne le désactive pas (déjà fait par défaut)
+                if (scalping2SpecificParamsDiv) scalping2SpecificParamsDiv.style.display = 'block'; // Affiche la section spécifique SCALPING2 (Indicateurs)
+                // Timeframe reste activé
                 if (timeframeRelevance) timeframeRelevance.textContent = '(Pertinent pour SCALPING2)';
             }
+            // La section 'general-params' reste toujours visible
         },
         appendLog: function(message, level = 'log') {
             if (!logOutput) {
@@ -347,7 +338,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const ask = parseFloat(tickerData.a);
                     if (!isNaN(bid) && !isNaN(ask) && ask > 0) {
                         const midPrice = (bid + ask) / 2;
-                        // Utiliser formatNumber pour une précision adaptative
                         displayPrice = formatNumber(midPrice);
                     } else if (!isNaN(bid)) {
                         displayPrice = formatNumber(bid); // Fallback to bid
@@ -380,23 +370,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById("signals-output");
             if (!container) return;
 
-            // Crée le tableau et l'en-tête s'ils n'existent pas
             let table = container.querySelector("table.signals-table");
             if (!table) {
                 table = document.createElement("table");
-                table.className = "signals-table"; // Ajouter une classe pour le style
+                table.className = "signals-table";
                 table.innerHTML = `<thead><tr><th>Heure</th><th>Type</th><th>Direction</th><th>Validé</th><th>Raison</th><th>Prix</th></tr></thead><tbody></tbody>`;
-                container.innerHTML = ""; // Vider le conteneur avant d'ajouter le tableau
+                container.innerHTML = "";
                 container.appendChild(table);
             }
 
             const tbody = table.querySelector("tbody");
-            if (!tbody) return; // Sécurité
+            if (!tbody) return;
 
-            const ts = new Date().toLocaleTimeString(); // Heure locale
-            const row = document.createElement("tr"); // Créer une nouvelle ligne
+            const ts = new Date().toLocaleTimeString();
+            const row = document.createElement("tr");
 
-            // Remplir la ligne avec les données de l'événement
             row.innerHTML = `
                 <td>${ts}</td>
                 <td>${event.signal_type ? event.signal_type.toUpperCase() : "-"}</td>
@@ -406,13 +394,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${event.price !== undefined ? formatNumber(event.price, 2) : "-"}</td>
             `;
 
-            // Ajouter la nouvelle ligne en haut du tbody
             tbody.insertBefore(row, tbody.firstChild);
 
-            // Limiter le nombre de lignes affichées (par exemple, les 5 dernières)
             const maxSignalRows = 5;
             while (tbody.rows.length > maxSignalRows) {
-                tbody.deleteRow(tbody.rows.length - 1); // Supprimer la ligne la plus ancienne
+                tbody.deleteRow(tbody.rows.length - 1);
             }
         }
     };
@@ -431,11 +417,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatNumber(num, decimals = 8) {
         const number = parseFloat(num);
         if (isNaN(number) || num === null || num === undefined) return 'N/A';
-        // Ajuster la précision basée sur la magnitude
         if (Math.abs(number) >= 1000) decimals = 2;
         else if (Math.abs(number) >= 10) decimals = 4;
         else if (Math.abs(number) >= 0.1) decimals = 6;
-        // Sinon, garder 8 par défaut pour les petites quantités/prix crypto
         try {
             return number.toLocaleString(undefined, {
                 minimumFractionDigits: decimals,
@@ -443,7 +427,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         } catch (e) {
             console.error("Error formatting number:", num, e);
-            // Fallback simple si toLocaleString échoue
             return number.toFixed(decimals);
         }
     }
@@ -453,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const date = new Date(parseInt(timestamp));
             if (isNaN(date.getTime())) return 'Invalid Date';
-            return date.toLocaleString(); // Utilise le format local de l'utilisateur
+            return date.toLocaleString();
         } catch (e) {
             console.error("Error formatting timestamp:", timestamp, e);
             return 'Invalid Date';
@@ -462,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- WebSocket Logic ---
     function connectWebSocket() {
-        if (ws && ws.readyState !== WebSocket.CLOSED) { // Vérifier aussi readyState
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
             console.warn("WebSocket connection already exists or is connecting.");
             return;
         }
@@ -473,17 +456,15 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onopen = () => {
             console.log('WebSocket connection established');
             UI.appendLog("WebSocket connecté.", "info");
-            fetchBotState(); // Récupérer l'état une fois connecté
+            fetchBotState();
         };
 
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                // console.debug('WebSocket message received:', data); // Garder commenté sauf pour debug
-
                 switch (data.type) {
                     case 'log':
-                    case 'debug': // Traiter debug comme log normal
+                    case 'debug':
                         UI.appendLog(data.message, 'log');
                         break;
                     case 'info':
@@ -500,29 +481,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         break;
                     case 'status_update':
                         if (data.state) {
-                            // console.log("Status Update Received:", data.state); // Garder commenté sauf pour debug
-                            UI.updateUI(data.state); // Met à jour les éléments non-prix
-                            UI.updatePriceDisplay(data.state.latest_book_ticker); // Met à jour le prix
-                            // L'historique est inclus dans l'état complet, le mettre à jour aussi
-                            if (data.state.order_history) {
-                                UI.updateOrderHistory(data.state.order_history);
-                            }
+                            UI.updateUI(data.state);
                         } else {
                             console.warn("Received status_update without state data:", data);
                         }
                         break;
-                    case 'ticker_update': // Gère les mises à jour légères du ticker
-                        // console.debug("Ticker Update Received:", data.ticker); // Garder commenté sauf pour debug
-                        UI.updatePriceDisplay(data.ticker); // Met à jour seulement le prix
+                    case 'ticker_update':
+                        UI.updatePriceDisplay(data.ticker);
                         break;
-                    case 'order_history_update': // Peut être redondant si status_update l'inclut déjà
-                        // Rafraîchir l'historique filtré côté client
+                    case 'order_history_update':
                         fetchAndDisplayOrderHistory();
                         UI.appendLog("Historique des ordres mis à jour (via push dédié).", "info");
                         break;
                     case 'ping':
-                        // Le serveur peut envoyer des pings, le client gère généralement les pongs automatiquement
-                        // Si un pong explicite est nécessaire: ws.send(JSON.stringify({ type: 'pong' }));
                         break;
                     case 'signal_event':
                         UI.displaySignalEvent(data);
@@ -531,7 +502,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         console.warn('Unknown WebSocket message type received:', data);
                         UI.appendLog(`[WS Type Inconnu: ${data.type}] ${JSON.stringify(data.message || data.payload || data)}`, 'warn');
                 }
-
             } catch (error) {
                 console.error('Error processing WebSocket message (Malformed JSON?):', error);
                 UI.appendLog(`Erreur traitement WS (JSON invalide?): ${event.data}`, 'error');
@@ -546,27 +516,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusValue.className = 'status-error';
             }
             if (stopBotBtn) stopBotBtn.disabled = true;
-            if (startBotBtn) startBotBtn.disabled = false; // Permettre de réessayer ? Ou laisser désactivé ?
-            ws = null; // Important de remettre à null en cas d'erreur
+            if (startBotBtn) startBotBtn.disabled = false;
+            ws = null;
         };
 
         ws.onclose = (event) => {
-            const wasConnected = !!ws; // Vérifier si ws était non-null avant de réinitialiser
-            ws = null; // Réinitialiser la variable ws D'ABORD
+            const wasConnected = !!ws;
+            ws = null;
             console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
-
-            // Mettre à jour l'UI pour refléter l'état déconnecté
             if (statusValue) {
                 statusValue.textContent = 'Déconnecté';
                 statusValue.className = 'status-stopped';
             }
             if (stopBotBtn) stopBotBtn.disabled = true;
-            if (startBotBtn) startBotBtn.disabled = false; // Permettre de redémarrer
-
-            // Ne loguer un avertissement et tenter une reconnexion que si la fermeture était inattendue
-            if (wasConnected && event.code !== 1000 && event.code !== 1001) { // 1000 = Normal, 1001 = Going Away (fermeture onglet)
+            if (startBotBtn) startBotBtn.disabled = false;
+            if (wasConnected && event.code !== 1000 && event.code !== 1001) {
                  UI.appendLog(`Connexion WebSocket fermée (Code: ${event.code}). Tentative de reconnexion dans 5s...`, 'warn');
-                 // Tentative simple de reconnexion après 5 secondes
                  setTimeout(connectWebSocket, 5000);
             } else {
                  UI.appendLog(`Connexion WebSocket fermée.`, "info");
@@ -583,15 +548,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) {
                 let errorMsg = `HTTP error! status: ${response.status}`;
                 try {
-                    // Essayer de lire le message d'erreur JSON du backend
                     const errorResult = await response.json();
                     errorMsg = errorResult.message || errorMsg;
-                } catch {} // catch inutilisé, suppression de l'avertissement
+                } catch {}
                 throw new Error(errorMsg);
             }
             const state = await response.json();
-            UI.updateUI(state); // Mettre à jour l'UI avec l'état complet
-            // L'historique est maintenant mis à jour via UI.updateUI si présent dans l'état
+            UI.updateUI(state);
             UI.appendLog("État initial récupéré.", "info");
         } catch (error) {
             console.error('Error fetching bot state:', error);
@@ -606,30 +569,25 @@ document.addEventListener('DOMContentLoaded', () => {
     async function startBot() {
         UI.appendLog("Envoi de la commande Démarrer...", "info");
         if(startBotBtn) startBotBtn.disabled = true;
-        if(stopBotBtn) stopBotBtn.disabled = true; // Désactiver aussi Stop pendant le démarrage
+        if(stopBotBtn) stopBotBtn.disabled = true;
         try {
             const response = await fetch(`${API_BASE_URL}/api/start`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) {
-                // Si échec, l'erreur est levée et catchée
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             UI.appendLog(result.message || 'Commande Démarrer envoyée.', 'info');
-            // L'état sera mis à jour par WebSocket (status_update)
         } catch (error) {
             console.error('Error starting bot:', error);
             UI.appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
-            // Réactiver les boutons seulement si l'API échoue, sinon laisser WS gérer
             if(startBotBtn) startBotBtn.disabled = false;
-            // Ne pas réactiver Stop ici, car l'état est incertain
-            // fetchBotState(); // Optionnel: forcer refresh état si WS lent
         }
     }
 
     async function stopBot() {
         UI.appendLog("Envoi de la commande Arrêter...", "info");
         if(stopBotBtn) stopBotBtn.disabled = true;
-        if(startBotBtn) startBotBtn.disabled = true; // Désactiver aussi Start pendant l'arrêt
+        if(startBotBtn) startBotBtn.disabled = true;
         try {
             const response = await fetch(`${API_BASE_URL}/api/stop`, { method: 'POST' });
             const result = await response.json();
@@ -637,13 +595,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             UI.appendLog(result.message || 'Commande Arrêter envoyée.', 'info');
-            // L'état sera mis à jour par WebSocket (status_update)
         } catch (error) {
             console.error('Error stopping bot:', error);
             UI.appendLog(`Erreur à l'arrêt du bot: ${error.message}`, 'error');
-            // Réactiver les boutons seulement si l'API échoue
-             if(stopBotBtn) stopBotBtn.disabled = false; // Ou se fier à l'état reçu par WS ?
-            // fetchBotState(); // Optionnel: forcer refresh état
+             if(stopBotBtn) stopBotBtn.disabled = false;
         }
     }
 
@@ -660,11 +615,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (saveParamsBtn) saveParamsBtn.disabled = true;
 
         const paramsToSend = {
-            // --- Stratégie ---
             STRATEGY_TYPE: strategySelector ? strategySelector.value : null,
             TIMEFRAME: safeValue(paramTimeframe),
-
-            // --- Paramètres Communs (Gestion Risque/Capital/Exit) ---
             RISK_PER_TRADE: safeValue(paramRisk, parseFloat),
             CAPITAL_ALLOCATION: safeValue(paramCapitalAllocation, parseFloat),
             STOP_LOSS_PERCENTAGE: safeValue(paramSl, parseFloat),
@@ -672,8 +624,6 @@ document.addEventListener('DOMContentLoaded', () => {
             TAKE_PROFIT_2_PERCENTAGE: safeValue(paramTp2, parseFloat),
             TRAILING_STOP_PERCENTAGE: safeValue(paramTrailing, parseFloat),
             TIME_STOP_MINUTES: safeValue(paramTimeStop, v => parseInt(v, 10)),
-
-            // --- Paramètres Swing ---
             EMA_SHORT_PERIOD: safeValue(paramEmaShort, v => parseInt(v, 10)),
             EMA_LONG_PERIOD: safeValue(paramEmaLong, v => parseInt(v, 10)),
             EMA_FILTER_PERIOD: safeValue(paramEmaFilter, v => parseInt(v, 10)),
@@ -683,8 +633,6 @@ document.addEventListener('DOMContentLoaded', () => {
             VOLUME_AVG_PERIOD: safeValue(paramVolumeAvg, v => parseInt(v, 10)),
             USE_EMA_FILTER: paramUseEmaFilter ? paramUseEmaFilter.checked : null,
             USE_VOLUME_CONFIRMATION: paramUseVolume ? paramUseVolume.checked : null,
-
-            // --- Paramètres Scalping (Order Book) ---
             SCALPING_ORDER_TYPE: paramScalpingOrderType ? paramScalpingOrderType.value : null,
             SCALPING_LIMIT_TIF: paramScalpingLimitTif ? paramScalpingLimitTif.value : null,
             SCALPING_LIMIT_ORDER_TIMEOUT_MS: safeValue(paramScalpingLimitTimeout, v => parseInt(v, 10)),
@@ -693,8 +641,6 @@ document.addEventListener('DOMContentLoaded', () => {
             SCALPING_SPREAD_THRESHOLD: safeValue(paramScalpingSpreadThreshold, parseFloat),
             SCALPING_IMBALANCE_THRESHOLD: safeValue(paramScalpingImbalanceThreshold, parseFloat),
             ORDER_COOLDOWN_MS: safeValue(paramOrderCooldown, v => parseInt(v, 10)),
-
-            // --- Paramètres Scalping 2 (Indicateurs) ---
             SUPERTREND_ATR_PERIOD: safeValue(paramSupertrendAtr, v => parseInt(v, 10)),
             SUPERTREND_ATR_MULTIPLIER: safeValue(paramSupertrendMult, parseFloat),
             SCALPING_RSI_PERIOD: safeValue(paramRsiPeriodScalp, v => parseInt(v, 10)),
@@ -706,32 +652,29 @@ document.addEventListener('DOMContentLoaded', () => {
             VOLUME_MA_PERIOD: safeValue(paramVolMa, v => parseInt(v, 10)),
         };
 
-        // Filtrer les clés avec valeur null (le backend les ignorera)
         const cleanedParamsToSend = Object.fromEntries(
             Object.entries(paramsToSend).filter(([_, v]) => v !== null && v !== undefined && !(typeof v === 'number' && isNaN(v)))
         );
 
-        console.log("Sending parameters:", JSON.stringify(cleanedParamsToSend, null, 2)); // Log pour vérifier
+        console.log("Sending parameters:", JSON.stringify(cleanedParamsToSend, null, 2));
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/parameters`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(cleanedParamsToSend), // Envoyer les paramètres nettoyés
+                body: JSON.stringify(cleanedParamsToSend),
             });
-            const result = await response.json(); // Toujours essayer de parser JSON
+            const result = await response.json();
 
             if (!response.ok) {
-                // Lever une erreur avec le message du backend si disponible
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
 
-            // Succès
             if (paramSaveStatus) {
                 paramSaveStatus.textContent = result.message || 'Paramètres sauvegardés!';
                 paramSaveStatus.className = 'status-success';
             }
-            UI.appendLog(result.message || 'Paramètres sauvegardés.', 'info'); // Log succès
+            UI.appendLog(result.message || 'Paramètres sauvegardés.', 'info');
             if (result.restart_recommended) {
                 alert("Un redémarrage du bot est conseillé pour appliquer certains changements.");
                 UI.appendLog("Redémarrage bot conseillé.", "warn");
@@ -743,10 +686,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 paramSaveStatus.textContent = `Erreur sauvegarde: ${error.message}`;
                 paramSaveStatus.className = 'status-error';
             }
-            UI.appendLog(`Erreur sauvegarde paramètres: ${error.message}`, 'error'); // Log erreur
+            UI.appendLog(`Erreur sauvegarde paramètres: ${error.message}`, 'error');
 
         } finally {
-            // Réactiver le bouton et effacer le statut après un délai
             setTimeout(() => {
                 if (paramSaveStatus) {
                     paramSaveStatus.textContent = '';
@@ -788,7 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error('Erreur API historique');
             const history = await response.json();
             UI.updateOrderHistory(history);
-        } catch {} // catch inutilisé, suppression de l'avertissement
+        } catch {}
     }
 
     // --- Fonction pour reset le bot ---
@@ -837,6 +779,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (strategySelector) {
         strategySelector.addEventListener('change', (event) => {
             UI.updateParameterVisibility(event.target.value);
+            // *** CORRECTION: Appeler fillParameters ici aussi ***
+            if (lastKnownState) {
+                UI.fillParameters(lastKnownState.config, event.target.value);
+            }
         });
     }
 
@@ -845,6 +791,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Mettre à jour la visibilité initiale basée sur la valeur par défaut du sélecteur
     if (strategySelector) {
         UI.updateParameterVisibility(strategySelector.value);
+        // *** CORRECTION: Appeler fillParameters ici aussi au chargement initial ***
+        // (Attendre que fetchBotState ait rempli lastKnownState)
+        // Note: fetchBotState appelle déjà UI.updateUI qui appelle fillParameters
     }
     // Établir la connexion WebSocket
     connectWebSocket();
