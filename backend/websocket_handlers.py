@@ -61,6 +61,16 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
     log_msg = f"Thread Exec Order ({action}): {side} {qty_info} {symbol} ({order_type}{price_info})"
     logger.info(log_msg)
 
+    # --- Contrôle global du cooldown ---
+    current_config = config_manager.get_config()
+    cooldown_ms = current_config.get("ORDER_COOLDOWN_MS", 0)
+    last_order_ts = state_manager.get_last_order_timestamp() or 0
+    now_ms = int(time.time() * 1000)
+    if cooldown_ms > 0 and (now_ms - last_order_ts) < cooldown_ms:
+        logger.warning(f"COOLDOWN GLOBAL ACTIF: {cooldown_ms - (now_ms - last_order_ts)}ms restants avant nouvel ordre. Ordre ignoré.")
+        return
+    # --- FIN Contrôle cooldown ---
+
     # --- Récupérer les SL/TP passés via kwargs ---
     sl_price_from_signal = kwargs.get("sl_price")
     tp1_price_from_signal = kwargs.get("tp1_price")
@@ -90,6 +100,10 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
              })
              logger.debug(f"Stored pending SL/TP for clientOrderId {client_order_id}")
         # --- Fin Stockage temporaire ---
+
+        # --- MAJ du timestamp du dernier ordre juste avant l'envoi ---
+        state_manager.set_last_order_timestamp(now_ms)
+        # --- FIN MAJ ---
 
         order_result = binance_client_wrapper.place_order(**order_params_with_cid) # Envoyer avec ID client
 
@@ -522,6 +536,15 @@ def handle_scalping2_signals(last_two_rows: pd.DataFrame, current_state: Dict[st
         min_notional = get_min_notional(symbol_info)
 
         if not is_in_position:
+            # --- COOLDOWN: Vérifier délai minimal entre ordres ---
+            cooldown_ms = current_config.get("ORDER_COOLDOWN_MS", 0)
+            last_order_ts = state_manager.get_last_order_timestamp() or 0
+            now_ms = int(time.time() * 1000)
+            if cooldown_ms > 0 and (now_ms - last_order_ts) < cooldown_ms:
+                logger.info(f"SCALPING2: Cooldown actif, {cooldown_ms - (now_ms - last_order_ts)}ms restants avant nouvel ordre.")
+                return
+            # --- FIN COOLDOWN ---
+
             long_signal, long_reason = check_long_conditions(current_row, prev_row)
             short_signal, short_reason = check_short_conditions(current_row, prev_row)
             broadcast_signal_event("entry", "LONG", bool(long_signal), long_reason or "Condition non remplie", {"price": float(current_price), "symbol": configured_symbol})
@@ -563,13 +586,6 @@ def handle_scalping2_signals(last_two_rows: pd.DataFrame, current_state: Dict[st
                      return
                 # --- Fin Calcul taille position ---
 
-                # --- SUPPRIMER la mise à jour de l'état temporaire ---
-                # temp_state_updates = { ... }
-                # state_manager.update_state(temp_state_updates)
-                # logger.debug(f"SCALPING2: Stored temp SL/TP: {temp_state_updates}")
-                # --- FIN SUPPRESSION ---
-
-                # Préparer ordre MARKET
                 entry_order_params = {
                     "symbol": configured_symbol,
                     "side": side,
@@ -586,6 +602,10 @@ def handle_scalping2_signals(last_two_rows: pd.DataFrame, current_state: Dict[st
                     tp2_price=tp2_price
                 )
                 # --- FIN MODIFICATION ---
+
+                # --- MAJ du timestamp du dernier ordre ---
+                state_manager.set_last_order_timestamp(now_ms)
+                # --- FIN MAJ ---
 
         elif is_in_position:
             # --- Vérification sortie (inchangée) ---

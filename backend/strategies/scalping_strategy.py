@@ -111,84 +111,35 @@ def check_entry_conditions(
         try:
             # --- Calcul Taille Position / Montant ---
             # available_balance est déjà un Decimal
-            capital_allocation_fraction = current_config.get(
-                "CAPITAL_ALLOCATION", Decimal("0.5")
-            )  # Déjà une fraction
-            capital_to_use = available_balance * capital_allocation_fraction
-            capital_to_use *= Decimal("0.95")  # Marge de sécurité
-
+            risk_per_trade_frac = current_config.get("RISK_PER_TRADE", Decimal("0.01"))
+            capital_allocation_fraction = current_config.get("CAPITAL_ALLOCATION", Decimal("0.5"))
+            stop_loss_frac = current_config.get("STOP_LOSS_PERCENTAGE", Decimal("0.005"))
+            max_risk = available_balance * risk_per_trade_frac
+            max_capital = available_balance * capital_allocation_fraction
             entry_price_decimal = best_ask_price  # Utiliser Ask pour acheter
             min_notional = get_min_notional(symbol_info)  # Récupère en Decimal
-
-            # Assurer un notionnel minimum (ex: 5.1 USDT ou min_notional + 5% buffer sur Testnet)
-            # Utiliser Decimal pour la comparaison
-            min_order_value = max(
-                Decimal("5.1"), min_notional * Decimal("1.05")
-            )  # Ajusté pour testnet
-
-            # Vérifier si le capital alloué est suffisant pour la valeur minimale
-            if capital_to_use < min_order_value:
-                logger.warning(
-                    f"SCALPING Entry: Capital insuffisant ({capital_to_use:.4f}) pour atteindre la valeur min ({min_order_value:.4f})."
-                )
-                return None
-
-            # --- Préparation des paramètres d'ordre ---
-            order_type = current_config.get("SCALPING_ORDER_TYPE", "MARKET").upper()
-            order_params = {
-                "symbol": current_symbol,
-                "side": "BUY",
-                "order_type": order_type,
-            }
-
-            # Récupérer la précision de l'asset de cotation (ex: USDT)
-            quote_precision = symbol_info.get(
-                "quotePrecision", 8
-            )  # Défaut 8 si non trouvé
-            quantizer = Decimal("1e-" + str(quote_precision))
-
-            if order_type == "MARKET":
-                # Pour MARKET BUY: Utiliser quoteOrderQty avec le capital à utiliser
-                # S'assurer qu'il ne dépasse pas le solde total disponible
-                quote_amount_to_spend_raw = min(capital_to_use, available_balance)
-
-                # CORRECTION: Arrondir quote_amount_to_spend à la bonne précision
-                quote_amount_to_spend = quote_amount_to_spend_raw.quantize(
-                    quantizer, rounding=ROUND_DOWN
-                )
-
-                # Vérification finale: le montant arrondi atteint-il le min_notional?
-                if quote_amount_to_spend < min_notional:
-                    logger.error(
-                        f"SCALPING Entry (MARKET): Montant final arrondi ({quote_amount_to_spend}) < MIN_NOTIONAL ({min_notional}). Raw: {quote_amount_to_spend_raw}"
-                    )
+            order_type = str(current_config.get("SCALPING_ORDER_TYPE", "MARKET")).upper()
+            order_params = {"symbol": current_symbol, "side": "BUY", "order_type": order_type}
+            # Pour LIMIT: sizing classique
+            if order_type == "LIMIT":
+                # Calcul du prix de stop (SL)
+                stop_loss_price = entry_price_decimal * (Decimal(1) - stop_loss_frac)
+                risk_per_unit = entry_price_decimal - stop_loss_price
+                if risk_per_unit <= 0:
+                    logger.warning(f"SCALPING Entry: Risque par unité nul ou négatif (SL={stop_loss_price:.8f}, Entry={entry_price_decimal:.8f}).")
                     return None
-
-                # Pas besoin de formater ici, le wrapper s'en charge (il convertira en str)
-                order_params["quoteOrderQty"] = (
-                    quote_amount_to_spend  # Utiliser la valeur arrondie
-                )
-                # Log avec la précision correcte
-                log_format_str = "{:." + str(quote_precision) + "f}"
-                logger.info(
-                    f"SCALPING Entry: Préparation MARKET BUY avec quoteOrderQty={log_format_str.format(order_params['quoteOrderQty'])}"
-                )
-
-            elif order_type == "LIMIT":
-                # Pour LIMIT BUY: Calculer la quantité BASE
-                base_quantity_unformatted = capital_to_use / entry_price_decimal
-
+                qty_risk = max_risk / risk_per_unit
+                qty_capital = max_capital / entry_price_decimal
+                base_quantity_unformatted = min(qty_risk, qty_capital)
                 # Formater la quantité BASE selon LOT_SIZE
                 formatted_base_quantity = format_quantity(
                     base_quantity_unformatted, symbol_info
                 )
-
                 if formatted_base_quantity is None or formatted_base_quantity <= 0:
                     logger.warning(
                         f"SCALPING Entry (LIMIT): Quantité base ({base_quantity_unformatted:.8f}) invalide après formatage."
                     )
                     return None
-
                 # Vérifier le notionnel final pour l'ordre LIMIT avec la quantité formatée
                 limit_price = format_price(
                     entry_price_decimal, symbol_info
@@ -198,7 +149,6 @@ def check_entry_conditions(
                         f"SCALPING Entry (LIMIT): Prix limite invalide après formatage."
                     )
                     return None
-
                 if not check_min_notional(
                     formatted_base_quantity, limit_price, min_notional
                 ):
@@ -206,22 +156,47 @@ def check_entry_conditions(
                         f"SCALPING Entry (LIMIT): Notionnel final ({formatted_base_quantity * limit_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}) après formatage Qty/Prix. Ordre annulé."
                     )
                     return None  # Annuler si on veut être strict
-
-                order_params["quantity"] = formatted_base_quantity
-                order_params["price"] = limit_price
+                order_params["quantity"] = str(formatted_base_quantity)
+                order_params["price"] = str(limit_price)
                 order_params["time_in_force"] = current_config.get(
                     "SCALPING_LIMIT_TIF", "GTC"
                 )
                 logger.info(
                     f"SCALPING Entry: Préparation LIMIT BUY Qty={order_params['quantity']} @ Price={order_params['price']} ({order_params['time_in_force']})"
                 )
-
+            elif order_type == "MARKET":
+                # Pour MARKET BUY: Utiliser quoteOrderQty avec le capital à utiliser ET le risque max
+                # Approximation: montant max risqué = max_risk / stop_loss_frac
+                # (si SL touché, perte = quoteOrderQty * stop_loss_frac)
+                if stop_loss_frac > 0:
+                    max_quote_risk = max_risk / stop_loss_frac
+                else:
+                    max_quote_risk = max_capital  # fallback
+                quote_amount_to_spend_raw = min(max_capital, max_quote_risk, available_balance)
+                # Récupérer la précision de l'asset de cotation (ex: USDT)
+                quote_precision = symbol_info.get(
+                    "quotePrecision", 8
+                )  # Défaut 8 si non trouvé
+                quantizer = Decimal("1e-" + str(quote_precision))
+                quote_amount_to_spend = quote_amount_to_spend_raw.quantize(
+                    quantizer, rounding=ROUND_DOWN
+                )
+                # Vérification finale: le montant arrondi atteint-il le min_notional?
+                if quote_amount_to_spend < min_notional:
+                    logger.error(
+                        f"SCALPING Entry (MARKET): Montant final arrondi ({quote_amount_to_spend}) < MIN_NOTIONAL ({min_notional}). Raw: {quote_amount_to_spend_raw}"
+                    )
+                    return None
+                order_params["quoteOrderQty"] = str(quote_amount_to_spend)
+                log_format_str = "{:." + str(quote_precision) + "f}"
+                logger.info(
+                    f"SCALPING Entry: Préparation MARKET BUY avec quoteOrderQty={log_format_str.format(Decimal(order_params['quoteOrderQty']))}"
+                )
             else:
                 logger.error(
                     f"SCALPING Entry: Type d'ordre non supporté '{order_type}'."
                 )
                 return None
-
             return order_params
 
         except (

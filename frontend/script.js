@@ -74,6 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const paramBbPeriod = document.getElementById('param-bb-period');
     const paramBbStd = document.getElementById('param-bb-std');
     const paramVolMa = document.getElementById('param-vol-ma'); // Volume MA pour Scalping2
+    const paramOrderCooldown = document.getElementById('param-order-cooldown');
 
     let ws = null; // WebSocket connection
 
@@ -164,6 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Pour les seuils, afficher la valeur brute (fraction ou nombre)
                 if(paramScalpingSpreadThreshold) paramScalpingSpreadThreshold.value = state.config.SCALPING_SPREAD_THRESHOLD ?? '';
                 if(paramScalpingImbalanceThreshold) paramScalpingImbalanceThreshold.value = state.config.SCALPING_IMBALANCE_THRESHOLD ?? '';
+                if (paramOrderCooldown) paramOrderCooldown.value = state.config.ORDER_COOLDOWN_MS ?? '';
 
 
                 // SCALPING 2 (Indicators) Specific Params
@@ -201,7 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
                          // Fallback si le template échoue
                          const row = orderHistoryBody.insertRow();
                          const cell = row.insertCell();
-                         cell.colSpan = 10; // Ajuster selon le nombre de colonnes
+                         cell.colSpan = 12; // Ajuster selon le nombre de colonnes
                          cell.textContent = "Aucun ordre dans l'historique.";
                          cell.style.textAlign = 'center';
                      }
@@ -209,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
                      // Fallback si l'élément placeholder n'est pas un template
                      const row = orderHistoryBody.insertRow();
                      const cell = row.insertCell();
-                     cell.colSpan = 10; // Ajuster selon le nombre de colonnes
+                     cell.colSpan = 12; // Ajuster selon le nombre de colonnes
                      cell.textContent = "Aucun ordre dans l'historique.";
                      cell.style.textAlign = 'center';
                 }
@@ -259,6 +261,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const priceOrValueText = formatNumber(avgPrice, 4); // Formater le prix (calculé ou direct)
 
+                // Valeur en quote asset
+                let quoteValue = '-';
+                if (!isNaN(cummQuoteQtyNum) && cummQuoteQtyNum > 0) {
+                    quoteValue = formatNumber(cummQuoteQtyNum, 2);
+                } else if (!isNaN(executedQtyNum) && !isNaN(avgPrice)) {
+                    quoteValue = formatNumber(executedQtyNum * avgPrice, 2);
+                }
+
                 // Classe CSS pour BUY/SELL
                 const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
 
@@ -266,11 +276,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 row.innerHTML = `
                     <td>${formatTimestamp(order.timestamp)}</td>
                     <td>${order.symbol || 'N/A'}</td>
+                    <td>${order.strategy || '-'}</td>
                     <td class="${sideClass}">${order.side || 'N/A'}</td>
                     <td>${order.type || 'N/A'}</td>
                     <td>${formatNumber(order.origQty, 8)}</td>
                     <td>${formatNumber(order.executedQty, 8)}</td>
                     <td>${priceOrValueText}</td>
+                    <td>${quoteValue}</td>
                     <td>${order.status || 'N/A'}</td>
                     <td class="${perfClass}">${performancePctText}</td>
                     <td>${order.orderId || 'N/A'}</td>
@@ -291,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (selectedStrategy === 'SWING') {
                 if (swingParamsDiv) swingParamsDiv.style.display = 'block';
-                if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'block'; // Afficher SL/TP etc.
+                if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'none'; // Afficher SL/TP etc.
                 if (timeframeRelevance) timeframeRelevance.textContent = '(Pertinent pour SWING)';
             } else if (selectedStrategy === 'SCALPING') {
                 if (scalpingParamsDiv) scalpingParamsDiv.style.display = 'block'; // Afficher SL/TP etc.
@@ -394,6 +406,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // --- Statistiques ---
+    const statRoi = document.getElementById('stat-roi');
+    const statWinrate = document.getElementById('stat-winrate');
+    const statWins = document.getElementById('stat-wins');
+    const statLosses = document.getElementById('stat-losses');
+    const statTotal = document.getElementById('stat-total');
+    const statAvgPnl = document.getElementById('stat-avg-pnl');
+    const resetBotBtn = document.getElementById('reset-bot-btn');
+
     // --- Helper Functions ---
 
     function formatNumber(num, decimals = 8) {
@@ -484,13 +505,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         UI.updatePriceDisplay(data.ticker); // Met à jour seulement le prix
                         break;
                     case 'order_history_update': // Peut être redondant si status_update l'inclut déjà
-                        if (data.history) {
-                            // console.log("Order History Update Received:", data.history); // Garder commenté sauf pour debug
-                            UI.updateOrderHistory(data.history);
-                            UI.appendLog("Historique des ordres mis à jour (via push dédié).", "info");
-                        } else {
-                            console.warn("Received order_history_update without history data:", data);
-                        }
+                        // Rafraîchir l'historique filtré côté client
+                        fetchAndDisplayOrderHistory();
+                        UI.appendLog("Historique des ordres mis à jour (via push dédié).", "info");
                         break;
                     case 'ping':
                         // Le serveur peut envoyer des pings, le client gère généralement les pongs automatiquement
@@ -664,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
             SCALPING_DEPTH_SPEED: paramScalpingDepthSpeed ? paramScalpingDepthSpeed.value : null,
             SCALPING_SPREAD_THRESHOLD: safeValue(paramScalpingSpreadThreshold, parseFloat),
             SCALPING_IMBALANCE_THRESHOLD: safeValue(paramScalpingImbalanceThreshold, parseFloat),
+            ORDER_COOLDOWN_MS: safeValue(paramOrderCooldown, v => parseInt(v, 10)),
 
             // --- Paramètres Scalping 2 (Indicateurs) ---
             SUPERTREND_ATR_PERIOD: safeValue(paramSupertrendAtr, v => parseInt(v, 10)),
@@ -726,6 +744,79 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 5000);
             if (saveParamsBtn) saveParamsBtn.disabled = false;
         }
+    }
+
+    // --- Fonction pour récupérer et afficher les stats ---
+    async function fetchAndDisplayStats() {
+        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/stats?strategy=${strategy}`);
+            if (!response.ok) throw new Error('Erreur API stats');
+            const stats = await response.json();
+            if (statRoi) statRoi.textContent = (stats.roi !== undefined) ? formatNumber(stats.roi, 4) : 'N/A';
+            if (statWinrate) statWinrate.textContent = (stats.winrate !== undefined) ? `${formatNumber(stats.winrate, 2)}%` : 'N/A';
+            if (statWins) statWins.textContent = stats.wins ?? 'N/A';
+            if (statLosses) statLosses.textContent = stats.losses ?? 'N/A';
+            if (statTotal) statTotal.textContent = stats.total_trades ?? 'N/A';
+            if (statAvgPnl) statAvgPnl.textContent = (stats.avg_pnl !== undefined) ? formatNumber(stats.avg_pnl, 4) : 'N/A';
+        } catch (e) {
+            if (statRoi) statRoi.textContent = 'N/A';
+            if (statWinrate) statWinrate.textContent = 'N/A';
+            if (statWins) statWins.textContent = 'N/A';
+            if (statLosses) statLosses.textContent = 'N/A';
+            if (statTotal) statTotal.textContent = 'N/A';
+            if (statAvgPnl) statAvgPnl.textContent = 'N/A';
+        }
+    }
+
+    // --- Fonction pour récupérer et afficher l'historique filtré par stratégie ---
+    async function fetchAndDisplayOrderHistory() {
+        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/order_history?strategy=${strategy}`);
+            if (!response.ok) throw new Error('Erreur API historique');
+            const history = await response.json();
+            UI.updateOrderHistory(history);
+        } catch (e) {
+            UI.updateOrderHistory([]); // Afficher vide en cas d'erreur
+        }
+    }
+
+    // --- Fonction pour reset le bot ---
+    async function resetBot() {
+        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
+        if (resetBotBtn) resetBotBtn.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ strategy })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || 'Erreur reset');
+            UI.appendLog(result.message || 'Bot réinitialisé.', 'info');
+            fetchBotState();
+            fetchAndDisplayStats();
+        } catch (e) {
+            UI.appendLog(`Erreur reset: ${e.message}`, 'error');
+        } finally {
+            if (resetBotBtn) resetBotBtn.disabled = false;
+        }
+    }
+
+    // --- Listener bouton reset ---
+    if (resetBotBtn) resetBotBtn.addEventListener('click', resetBot);
+
+    // --- Rafraîchir stats au chargement et au changement de stratégie ---
+    document.addEventListener('DOMContentLoaded', fetchAndDisplayStats);
+    if (strategySelector) {
+        strategySelector.addEventListener('change', fetchAndDisplayStats);
+    }
+
+    // --- Rafraîchir l'historique au chargement et au changement de stratégie ---
+    document.addEventListener('DOMContentLoaded', fetchAndDisplayOrderHistory);
+    if (strategySelector) {
+        strategySelector.addEventListener('change', fetchAndDisplayOrderHistory);
     }
 
     // --- Event Listeners ---

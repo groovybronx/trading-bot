@@ -41,11 +41,13 @@
                         <tr>
                             <th>Date/Heure</th>
                             <th>Symbole</th>
+                            <th>Stratégie</th>
                             <th>Side</th>
                             <th>Type</th>
                             <th>Qté Demandée</th>
                             <th>Qté Exécutée</th>
                             <th>Prix / Valeur</th>
+                            <th>Valeur (quote)</th>
                             <th>Statut</th>
                             <th>Performance (%)</th>
                             <th>ID Ordre</th>
@@ -54,12 +56,24 @@
                     <tbody id="order-history-body">
                         <template id="order-history-placeholder">
                             <tr>
-                                <td colspan="10">Aucun ordre dans l'historique de cette session.</td>
+                                <td colspan="12">Aucun ordre dans l'historique de cette session.</td>
                             </tr>
                         </template>
                     </tbody>
                 </table>
             </div>
+        </section>
+
+        <section id="stats">
+            <h2>Statistiques</h2>
+            <ul>
+                <li>ROI : <span id="stat-roi">N/A</span></li>
+                <li>Winrate : <span id="stat-winrate">N/A</span></li>
+                <li>Ordres gagnants : <span id="stat-wins">N/A</span></li>
+                <li>Ordres perdants : <span id="stat-losses">N/A</span></li>
+                <li>Nombre total d'ordres : <span id="stat-total">N/A</span></li>
+                <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
+            </ul>
         </section>
 
         <section id="logs">
@@ -71,6 +85,7 @@
             <h2>Contrôles</h2>
             <button id="start-bot-btn">Démarrer le Bot</button>
             <button id="stop-bot-btn" disabled>Arrêter le Bot</button>
+            <button id="reset-bot-btn">Reset Bot</button>
         </section>
 
         <section id="parameters">
@@ -97,6 +112,11 @@
                         <label for="param-capital-allocation">Capital investi (%) :</label>
                         <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100"
                             step="1">
+                    </div>
+                    <div>
+                        <label for="param-order-cooldown">Délai minimum entre ordres (ms) :</label>
+                        <input type="number" id="param-order-cooldown" name="ORDER_COOLDOWN_MS" min="0" step="100"
+                            value="0">
                     </div>
                 </div>
             </section>
@@ -151,11 +171,6 @@
                     <div>
                         <label for="param-risk">Risque / Trade (%) :</label>
                         <input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="10" step="0.1">
-                    </div>
-                    <div>
-                        <label for="param-capital-allocation">Allocation Capital (%) :</label>
-                        <input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100"
-                            step="1">
                     </div>
                     <div>
                         <label for="param-volume-avg">Moy. Vol. Période :</label>

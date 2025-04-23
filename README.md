@@ -2,6 +2,15 @@
 
 Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagné d'une interface web (Dashboard) construite avec Flask et JavaScript. Il permet de surveiller l'état du bot, de visualiser les ordres, de consulter les logs en temps réel, de démarrer/arrêter le bot et de configurer les paramètres de stratégie via le navigateur.
 
+## Changelog
+
+### 2025-04-23
+- **Sizing unifié** : Toutes les stratégies (SWING, SCALPING, SCALPING2) appliquent désormais le sizing de position en respectant à la fois le pourcentage de capital investi (`CAPITAL_ALLOCATION`) et le pourcentage de risque par trade (`RISK_PER_TRADE`).
+- **Conversion Decimal → str** : Toutes les valeurs numériques envoyées à l’API Binance (quantité, prix, quoteOrderQty) sont systématiquement converties en chaîne (`str`) pour éviter les erreurs de typage et garantir la compatibilité avec l’API.
+- **Validation stricte des paramètres** : Les paramètres critiques (ex : `STOP_LOSS_PERCENTAGE`, `RISK_PER_TRADE`, `CAPITAL_ALLOCATION`) sont validés à la sauvegarde. Un paramètre manquant ou hors bornes empêche le démarrage du bot.
+- **Correction d’erreurs Pylance/Pyright** : Les erreurs de type liées à l’utilisation de `Decimal` dans les dictionnaires d’ordres ont été corrigées.
+- **Documentation** : Ajout d’exemples de scripts de test d’ordre (`backend/test_place_order.py`, `backend/test_scalping2_order.py`) pour valider la logique de sizing et la compatibilité API.
+
 ## Fonctionnalités
 
 *   **Connexion Binance :** Utilise l'API REST et les WebSockets de Binance (Spot).

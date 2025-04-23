@@ -115,10 +115,13 @@ def check_entry_conditions(
             logger.warning(f"SWING Entry: Risque par unité nul ou négatif (SL={stop_loss_price:.8f}, Entry={entry_price:.8f}).")
             return None
 
-        # Calcul capital et quantité
-        capital_to_use = available_balance * capital_allocation_frac
-        capital_to_risk = capital_to_use * risk_per_trade_frac # Montant max à risquer sur ce trade
-        quantity_unformatted = capital_to_risk / risk_per_unit # Quantité BASE théorique
+        # --- NOUVELLE LOGIQUE SIZING ---
+        max_risk = available_balance * risk_per_trade_frac
+        max_capital = available_balance * capital_allocation_frac
+        qty_risk = max_risk / risk_per_unit
+        qty_capital = max_capital / entry_price
+        quantity_unformatted = min(qty_risk, qty_capital)
+        # --- FIN NOUVELLE LOGIQUE ---
 
         # Formater la quantité selon LOT_SIZE
         formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
@@ -131,27 +134,21 @@ def check_entry_conditions(
         min_notional = get_min_notional(symbol_info)
         if not check_min_notional(formatted_quantity, entry_price, min_notional):
             logger.warning(f"SWING Entry: Notionnel ({formatted_quantity * entry_price:.4f}) < MIN_NOTIONAL ({min_notional:.4f}) après formatage Qty. Ordre non placé.")
-            # Pourrait-on ajuster la quantité pour atteindre min_notional?
-            # qty_for_min_notional = min_notional / entry_price
-            # formatted_quantity = format_quantity(qty_for_min_notional, symbol_info)
-            # if formatted_quantity is None or not check_min_notional(formatted_quantity, entry_price, min_notional):
-            #     return None # Annuler si ajustement échoue
             return None # Annuler si on veut être strict
 
         # Vérifier si le notionnel de l'ordre dépasse le capital alloué
         order_notional = formatted_quantity * entry_price
-        if order_notional > capital_to_use:
-             logger.warning(f"SWING Entry: Notionnel ordre ({order_notional:.4f}) > capital alloué ({capital_to_use:.4f}). Ajustement quantité.")
+        if order_notional > max_capital:
+             logger.warning(f"SWING Entry: Notionnel ordre ({order_notional:.4f}) > capital alloué ({max_capital:.4f}). Ajustement quantité.")
              # Recalculer la quantité basée sur le capital_to_use
-             quantity_unformatted = capital_to_use / entry_price
+             quantity_unformatted = max_capital / entry_price
              formatted_quantity = format_quantity(quantity_unformatted, symbol_info)
              if formatted_quantity is None or formatted_quantity <= 0 or not check_min_notional(formatted_quantity, entry_price, min_notional):
                   logger.error("SWING Entry: Impossible d'ajuster la quantité pour respecter le capital et min_notional.")
                   return None
              logger.info(f"SWING Entry: Quantité ajustée à {formatted_quantity} pour respecter le capital.")
 
-
-        logger.info(f"SWING Entry: Calcul taille OK. Qty={formatted_quantity} {symbol} (Risque visé: {capital_to_risk:.2f}, SL: {stop_loss_price:.4f})")
+        logger.info(f"SWING Entry: Calcul taille OK. Qty={formatted_quantity} {symbol} (Risque max: {max_risk:.2f}, Capital max: {max_capital:.2f}, SL: {stop_loss_price:.4f})")
 
         # Préparer l'ordre MARKET
         order_params = {

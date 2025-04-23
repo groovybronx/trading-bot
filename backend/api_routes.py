@@ -25,6 +25,8 @@ from utils.order_utils import format_quantity, format_price, get_min_notional, c
 # Config Logging (si log_queue est utilisé)
 # from logging_config import log_queue # Décommenter si utilisé
 
+import db
+
 logger = logging.getLogger(__name__)
 api_bp = Blueprint('api', __name__)
 
@@ -119,9 +121,10 @@ def stop_bot_route():
 
 @api_bp.route('/order_history')
 def get_order_history():
-    """Retourne l'historique des ordres."""
+    """Retourne l'historique des ordres, filtré par stratégie si précisé."""
     try:
-        history = state_manager.get_order_history()
+        strategy = request.args.get('strategy')
+        history = state_manager.get_order_history(strategy)
         return jsonify(history)
     except Exception as e:
         logger.error(f"API /order_history: Error: {e}", exc_info=True)
@@ -247,6 +250,63 @@ def handle_place_order():
         logger.exception("API /place_order: Unexpected error during preparation or sending.")
         return jsonify({"success": False, "message": f"Erreur interne serveur: {e}"}), 500
 
+@api_bp.route('/reset', methods=['POST'])
+def reset_bot():
+    """Réinitialise l’historique des ordres pour la stratégie sélectionnée."""
+    try:
+        data = request.get_json() or {}
+        strategy = data.get('strategy') or state_manager.get_state('strategy') or 'SCALPING'
+        db.reset_orders(strategy)
+        state_manager.clear_order_history()  # Ajout : efface aussi l'historique en mémoire
+        logger.info(f"API /reset: Historique des ordres réinitialisé pour la stratégie {strategy}.")
+        broadcast_state_update()
+        return jsonify({"success": True, "message": f"Historique réinitialisé pour {strategy}."})
+    except Exception as e:
+        logger.error(f"API /reset: Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur lors du reset."}), 500
+
+@api_bp.route('/stats')
+def get_stats():
+    """Retourne les statistiques pour la stratégie sélectionnée (calculées sur l'historique filtré)."""
+    try:
+        strategy = request.args.get('strategy') or state_manager.get_state('strategy') or 'SCALPING'
+        history = state_manager.get_order_history(strategy)
+        total = len(history)
+        wins = 0
+        losses = 0
+        pnl = Decimal('0')
+        pnl_sum = Decimal('0')
+        pnl_count = 0
+        for order in history:
+            if order.get('side') == 'SELL' and order.get('status') == 'FILLED':
+                perf = order.get('performance_pct')
+                if perf:
+                    try:
+                        perf_val = Decimal(perf.replace('%','')) / 100 if '%' in str(perf) else Decimal(perf)
+                        pnl += perf_val
+                        pnl_sum += perf_val
+                        pnl_count += 1
+                        if perf_val > 0:
+                            wins += 1
+                        else:
+                            losses += 1
+                    except Exception:
+                        pass
+        winrate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+        avg_pnl = (pnl_sum / pnl_count * 100) if pnl_count > 0 else Decimal('0')
+        stats = {
+            'total_trades': total,
+            'wins': wins,
+            'losses': losses,
+            'winrate': round(winrate, 2),
+            'pnl_percent': round(pnl * 100, 2),
+            'roi': round(pnl * 100, 2), # Ajouté pour compatibilité frontend
+            'avg_pnl': round(avg_pnl, 2) # Ajouté pour compatibilité frontend
+        }
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"API /stats: Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur lors du calcul des stats."}), 500
 
 # Exporter le Blueprint
 __all__ = ['api_bp']
