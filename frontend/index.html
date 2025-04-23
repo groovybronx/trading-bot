@@ -235,6 +235,52 @@
                 </div>
             </div> <!-- Fin scalping-params -->
 
+            <!-- Section pour SCALPING 2 (Indicateurs) -->
+            <div id="scalping2-specific-params" style="display: none;">
+                <h3>Paramètres SCALPING 2 (Indicateurs)</h3>
+                <div class="param-grid">
+                    <div>
+                        <label for="param-supertrend-atr">Supertrend ATR Période :</label>
+                        <input type="number" id="param-supertrend-atr" name="SUPERTREND_ATR_PERIOD" min="1" step="1">
+                    </div>
+                    <div>
+                        <label for="param-supertrend-mult">Supertrend Multiplicateur :</label>
+                        <input type="number" id="param-supertrend-mult" name="SUPERTREND_ATR_MULTIPLIER" min="0.1" step="0.1">
+                    </div>
+                    <div>
+                        <label for="param-rsi-period-scalp">RSI Période :</label>
+                        <input type="number" id="param-rsi-period-scalp" name="SCALPING_RSI_PERIOD" min="2" step="1">
+                    </div>
+                    <div>
+                        <label for="param-stoch-k">Stochastique %K :</label>
+                        <input type="number" id="param-stoch-k" name="STOCH_K_PERIOD" min="1" step="1">
+                    </div>
+                    <div>
+                        <label for="param-stoch-d">Stochastique %D :</label>
+                        <input type="number" id="param-stoch-d" name="STOCH_D_PERIOD" min="1" step="1">
+                    </div>
+                    <div>
+                        <label for="param-stoch-smooth">Stochastique Lissage :</label>
+                        <input type="number" id="param-stoch-smooth" name="STOCH_SMOOTH" min="1" step="1">
+                    </div>
+                    <div>
+                        <label for="param-bb-period">Bandes Bollinger Période :</label>
+                        <input type="number" id="param-bb-period" name="BB_PERIOD" min="2" step="1">
+                    </div>
+                    <div>
+                        <label for="param-bb-std">Bandes Bollinger Écart-Type :</label>
+                        <input type="number" id="param-bb-std" name="BB_STD" min="0.1" step="0.1">
+                    </div>
+                    <div>
+                        <label for="param-vol-ma">Moy. Mobile Volume Période :</label>
+                        <input type="number" id="param-vol-ma" name="VOLUME_MA_PERIOD" min="1" step="1">
+                    </div>
+                    <!-- Note: Timeframe est géré par la section SWING mais activé/désactivé par JS -->
+                    <!-- Note: SL/TP/Cooldown sont dans la section générale -->
+                </div>
+            </div> <!-- Fin scalping2-specific-params -->
+
+
             <button id="save-params-btn">Sauvegarder les Paramètres</button>
             <p id="param-save-status"></p>
         </section>

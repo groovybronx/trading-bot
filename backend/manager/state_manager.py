@@ -155,7 +155,10 @@ class StateManager:
 
             self._bot_state.update(updates)
             # --- Save state changes (excluding history) ---
-            self.save_persistent_data() # Save state changes immediately
+            saved = self.save_persistent_data() # Save state changes immediately
+            if not saved:
+                 logger.error("StateManager: State update failed to save.")
+            # Broadcast is no longer handled here, the caller should trigger it if needed.
 
     # --- Gestion Historique Ordres (DELEGATED TO DB) ---
 

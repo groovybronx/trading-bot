@@ -19,6 +19,7 @@ from binance.error import ClientError, ServerError
 from manager.state_manager import state_manager
 from manager.config_manager import config_manager, SYMBOL
 import binance_client_wrapper
+
 # Import the singleton OrderManager instance
 from manager.order_manager import order_manager
 
@@ -39,6 +40,7 @@ KEEPALIVE_INTERVAL_SECONDS = 30 * 60
 
 # --- Fonctions Ordres Stratégie (Moved to websocket_handlers.py) ---
 # cancel_scalping_order moved to websocket_handlers.py
+
 
 # --- Thread Principal Bot (Unchanged) ---
 def run_bot():
@@ -202,7 +204,7 @@ def _initialize_client_and_config() -> bool:
     logger.info("Start Core: Initializing Binance Client...")
     if binance_client_wrapper.get_client() is None:
         state_manager.update_state({"status": "ERROR"})
-        # broadcast_state_update() # State update now saves and broadcasts
+        broadcast_state_update()  # Notify frontend of the error state
         return False
     logger.info("Start Core: Binance Client initialized. Config loaded.")
     return True
@@ -221,7 +223,7 @@ def _load_and_prepare_state() -> bool:
     if not symbol_info:
         logger.error(f"Start Core: Cannot retrieve info for symbol {current_symbol}.")
         state_manager.update_state({"status": "ERROR"})
-        # broadcast_state_update() # State update now saves and broadcasts
+        broadcast_state_update()  # Notify frontend of the error state
         return False
 
     state_manager.update_symbol_info(symbol_info)
@@ -231,7 +233,7 @@ def _load_and_prepare_state() -> bool:
     if not base_asset or not quote_asset:
         logger.error(f"Start Core: Base/Quote asset missing for {current_symbol}.")
         state_manager.update_state({"status": "ERROR"})
-        # broadcast_state_update() # State update now saves and broadcasts
+        broadcast_state_update()  # Notify frontend of the error state
         return False
 
     initial_quote = binance_client_wrapper.get_account_balance(asset=quote_asset)
@@ -349,7 +351,7 @@ def _start_main_thread() -> bool:
     else:
         logger.error("Start Core: Failed to start main bot thread.")
         state_manager.update_state({"main_thread": None, "status": "ERROR"})
-        # broadcast_state_update() # State update now saves and broadcasts
+        broadcast_state_update()  # Notify frontend of the error state
         return False
 
 
@@ -641,7 +643,7 @@ def start_bot_core() -> tuple[bool, str]:
                 "Start Core: Failed to prefetch klines required for strategy. Aborting start."
             )
             state_manager.update_state({"status": "ERROR"})
-            # broadcast_state_update() # State update now saves and broadcasts
+            broadcast_state_update()  # Notify frontend of the error state
             return False, "Échec préchargement Klines (requis pour SWING/SCALPING2)."
         else:
             logger.warning(
@@ -654,10 +656,18 @@ def start_bot_core() -> tuple[bool, str]:
         _stop_websockets(
             is_partial_stop=True
         )  # Clean up started WS if main thread fails
+        _stop_websockets(
+            is_partial_stop=True
+        )  # Clean up started WS if main thread fails
+        # Error state already set and broadcasted by _start_main_thread
+        _stop_websockets(
+            is_partial_stop=True
+        )  # Clean up started WS if main thread fails
+        # Error state already set and broadcasted by _start_main_thread
         return False, "Échec démarrage thread principal."
 
     state_manager.update_state({"status": "RUNNING"})
-    # broadcast_state_update() # State update now saves and broadcasts
+    broadcast_state_update() # Notify frontend that bot is RUNNING
     logger.info(f"Start Core: Bot started successfully (Status: RUNNING).")
     return True, "Bot démarré avec succès."
 
@@ -700,8 +710,9 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
         "_temp_entry_tp1": None,
         "_temp_entry_tp2": None,
     }
-    state_manager.update_state(state_updates_on_stop)  # This saves state and broadcasts
-    # broadcast_state_update() # No longer needed, done by update_state
+    state_manager.update_state(state_updates_on_stop)
+    # Ensure broadcast happens AFTER state is updated
+    broadcast_state_update() # Notify frontend of the final stopped state
 
     # No need to save persistent data here, update_state does it now
 

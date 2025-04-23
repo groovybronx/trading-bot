@@ -127,57 +127,66 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update Parameter Inputs if config exists
             if (state.config) {
                 // Strategy selector and visibility
+                const currentStrategy = state.config.STRATEGY_TYPE || 'SWING'; // Default to SWING if missing
                 if (strategySelector) {
-                    strategySelector.value = state.config.STRATEGY_TYPE || 'SWING'; // Default to SWING if missing
-                    UI.updateParameterVisibility(strategySelector.value);
+                    strategySelector.value = currentStrategy;
+                    UI.updateParameterVisibility(currentStrategy); // Gère la visibilité
                 }
 
                 // Helper function to convert backend fractions to frontend percentages
                 const toPercent = (value) => (value !== null && value !== undefined && !isNaN(parseFloat(value))) ? (parseFloat(value) * 100).toString() : '';
 
-                // Common Params (Risk/Capital/Exit)
+                // Common Params (Risk/Capital/Exit/Cooldown) - TOUJOURS REMPLIS
                 if (paramRisk) paramRisk.value = toPercent(state.config.RISK_PER_TRADE);
                 if (paramCapitalAllocation) paramCapitalAllocation.value = toPercent(state.config.CAPITAL_ALLOCATION);
                 if (paramSl) paramSl.value = toPercent(state.config.STOP_LOSS_PERCENTAGE);
                 if (paramTp1) paramTp1.value = toPercent(state.config.TAKE_PROFIT_1_PERCENTAGE);
                 if (paramTp2) paramTp2.value = toPercent(state.config.TAKE_PROFIT_2_PERCENTAGE);
                 if (paramTrailing) paramTrailing.value = toPercent(state.config.TRAILING_STOP_PERCENTAGE);
-                if (paramTimeStop) paramTimeStop.value = state.config.TIME_STOP_MINUTES ?? ''; // Utiliser '' si null/undefined
+                if (paramTimeStop) paramTimeStop.value = state.config.TIME_STOP_MINUTES ?? '';
+                if (paramOrderCooldown) paramOrderCooldown.value = state.config.ORDER_COOLDOWN_MS ?? ''; // Cooldown est commun
 
-                // SWING Params
-                if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME || '1m'; // Utiliser TIMEFRAME
-                if (paramEmaShort) paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
-                if (paramEmaLong) paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
-                if (paramEmaFilter) paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
-                if (paramRsiPeriod) paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
-                if (paramRsiOb) paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
-                if (paramRsiOs) paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
-                if (paramVolumeAvg) paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
-                if (paramUseEmaFilter) paramUseEmaFilter.checked = state.config.USE_EMA_FILTER ?? false;
-                if (paramUseVolume) paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION ?? false;
+                // SWING Params - Remplir SEULEMENT si SWING est sélectionné
+                if (currentStrategy === 'SWING') {
+                    if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME || '1m';
+                    if (paramEmaShort) paramEmaShort.value = state.config.EMA_SHORT_PERIOD ?? '';
+                    if (paramEmaLong) paramEmaLong.value = state.config.EMA_LONG_PERIOD ?? '';
+                    if (paramEmaFilter) paramEmaFilter.value = state.config.EMA_FILTER_PERIOD ?? '';
+                    if (paramRsiPeriod) paramRsiPeriod.value = state.config.RSI_PERIOD ?? '';
+                    if (paramRsiOb) paramRsiOb.value = state.config.RSI_OVERBOUGHT ?? '';
+                    if (paramRsiOs) paramRsiOs.value = state.config.RSI_OVERSOLD ?? '';
+                    if (paramVolumeAvg) paramVolumeAvg.value = state.config.VOLUME_AVG_PERIOD ?? '';
+                    if (paramUseEmaFilter) paramUseEmaFilter.checked = state.config.USE_EMA_FILTER ?? false;
+                    if (paramUseVolume) paramUseVolume.checked = state.config.USE_VOLUME_CONFIRMATION ?? false;
+                }
 
-                // SCALPING (Order Book) Specific Params
-                if(paramScalpingOrderType) paramScalpingOrderType.value = state.config.SCALPING_ORDER_TYPE || 'MARKET';
-                if(paramScalpingLimitTif) paramScalpingLimitTif.value = state.config.SCALPING_LIMIT_TIF || 'GTC';
-                if(paramScalpingLimitTimeout) paramScalpingLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
-                if(paramScalpingDepthLevels) paramScalpingDepthLevels.value = state.config.SCALPING_DEPTH_LEVELS || '5';
-                if(paramScalpingDepthSpeed) paramScalpingDepthSpeed.value = state.config.SCALPING_DEPTH_SPEED || '1000ms';
-                // Pour les seuils, afficher la valeur brute (fraction ou nombre)
-                if(paramScalpingSpreadThreshold) paramScalpingSpreadThreshold.value = state.config.SCALPING_SPREAD_THRESHOLD ?? '';
-                if(paramScalpingImbalanceThreshold) paramScalpingImbalanceThreshold.value = state.config.SCALPING_IMBALANCE_THRESHOLD ?? '';
-                if (paramOrderCooldown) paramOrderCooldown.value = state.config.ORDER_COOLDOWN_MS ?? '';
+                // SCALPING (Order Book) Specific Params - Remplir SEULEMENT si SCALPING est sélectionné
+                if (currentStrategy === 'SCALPING') {
+                    if(paramScalpingOrderType) paramScalpingOrderType.value = state.config.SCALPING_ORDER_TYPE || 'MARKET';
+                    if(paramScalpingLimitTif) paramScalpingLimitTif.value = state.config.SCALPING_LIMIT_TIF || 'GTC';
+                    if(paramScalpingLimitTimeout) paramScalpingLimitTimeout.value = state.config.SCALPING_LIMIT_ORDER_TIMEOUT_MS ?? '';
+                    if(paramScalpingDepthLevels) paramScalpingDepthLevels.value = state.config.SCALPING_DEPTH_LEVELS || '5';
+                    if(paramScalpingDepthSpeed) paramScalpingDepthSpeed.value = state.config.SCALPING_DEPTH_SPEED || '1000ms';
+                    // Pour les seuils, afficher la valeur brute (fraction ou nombre)
+                    if(paramScalpingSpreadThreshold) paramScalpingSpreadThreshold.value = state.config.SCALPING_SPREAD_THRESHOLD ?? '';
+                    if(paramScalpingImbalanceThreshold) paramScalpingImbalanceThreshold.value = state.config.SCALPING_IMBALANCE_THRESHOLD ?? '';
+                    // paramOrderCooldown est maintenant dans les communs
+                }
 
-
-                // SCALPING 2 (Indicators) Specific Params
-                if (paramSupertrendAtr) paramSupertrendAtr.value = state.config.SUPERTREND_ATR_PERIOD ?? '';
-                if (paramSupertrendMult) paramSupertrendMult.value = state.config.SUPERTREND_ATR_MULTIPLIER ?? '';
-                if (paramRsiPeriodScalp) paramRsiPeriodScalp.value = state.config.SCALPING_RSI_PERIOD ?? '';
-                if (paramStochK) paramStochK.value = state.config.STOCH_K_PERIOD ?? '';
-                if (paramStochD) paramStochD.value = state.config.STOCH_D_PERIOD ?? '';
-                if (paramStochSmooth) paramStochSmooth.value = state.config.STOCH_SMOOTH ?? '';
-                if (paramBbPeriod) paramBbPeriod.value = state.config.BB_PERIOD ?? '';
-                if (paramBbStd) paramBbStd.value = state.config.BB_STD ?? '';
-                if (paramVolMa) paramVolMa.value = state.config.VOLUME_MA_PERIOD ?? ''; // Volume MA pour Scalping2
+                // SCALPING 2 (Indicators) Specific Params - Remplir SEULEMENT si SCALPING2 est sélectionné
+                if (currentStrategy === 'SCALPING2') {
+                    if (paramTimeframe) paramTimeframe.value = state.config.TIMEFRAME || '1m'; // Timeframe pertinent aussi
+                    if (paramSupertrendAtr) paramSupertrendAtr.value = state.config.SUPERTREND_ATR_PERIOD ?? '';
+                    if (paramSupertrendMult) paramSupertrendMult.value = state.config.SUPERTREND_ATR_MULTIPLIER ?? '';
+                    if (paramRsiPeriodScalp) paramRsiPeriodScalp.value = state.config.SCALPING_RSI_PERIOD ?? '';
+                    if (paramStochK) paramStochK.value = state.config.STOCH_K_PERIOD ?? '';
+                    if (paramStochD) paramStochD.value = state.config.STOCH_D_PERIOD ?? '';
+                    if (paramStochSmooth) paramStochSmooth.value = state.config.STOCH_SMOOTH ?? '';
+                    if (paramBbPeriod) paramBbPeriod.value = state.config.BB_PERIOD ?? '';
+                    if (paramBbStd) paramBbStd.value = state.config.BB_STD ?? '';
+                    if (paramVolMa) paramVolMa.value = state.config.VOLUME_MA_PERIOD ?? ''; // Volume MA pour Scalping2
+                    // paramOrderCooldown est maintenant dans les communs
+                }
 
             } else {
                 console.warn("State received without config object. Cannot update parameters.");
@@ -198,7 +207,9 @@ document.addEventListener('DOMContentLoaded', () => {
                      try {
                         const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true);
                         orderHistoryBody.appendChild(placeholderClone);
-                     } catch (e) {
+                    } catch (e) {
+                        console.error("Error fetching and displaying order history:", e);
+                        console.error("Error fetching and displaying order history:", e);
                          console.error("Error using order history placeholder template:", e);
                          // Fallback si le template échoue
                          const row = orderHistoryBody.insertRow();
