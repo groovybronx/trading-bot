@@ -837,7 +837,12 @@ def _handle_execution_report(data: dict):
     if formatted_data_for_db and active_session_id is not None:
         save_success = db.save_order(formatted_data_for_db, active_session_id)
         if save_success:
-            broadcast_order_history_update()  # Broadcast only on successful save
+            broadcast_order_history_update() # Broadcast history update
+            # Check if the order status implies the trade/stats might have changed
+            if status in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
+                 # Import locally to avoid circular dependency at top level
+                 from utils.websocket_utils import broadcast_stats_update
+                 broadcast_stats_update(active_session_id) # Broadcast stats update
         else:
             # Error already logged in save_order if it failed
             logger.error(

@@ -4,7 +4,7 @@ import json
 import os
 import queue
 import time
-import threading
+import threading # Assurer que threading est importé
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 from flask_sock import Sock, ConnectionClosed
@@ -36,6 +36,23 @@ CORS(app)
 sock = Sock(app)
 app.register_blueprint(api_bp, url_prefix="/api")
 
+# --- Fonction pour envoyer les données initiales dans un thread ---
+def send_initial_data(ws_client, client_ip_addr):
+    """Sends initial connection message and state update to a new client."""
+    try:
+        # Petit délai pour être sûr que le handshake est terminé
+        time.sleep(0.1)
+        logger.info(f"Sending initial data to {client_ip_addr}...")
+        ws_client.send(json.dumps({"type": "info", "message": "Connected to backend WebSocket."}))
+        broadcast_state_update() # Envoyer état actuel (inclut config, ticker, historique)
+        logger.info(f"Initial data sent successfully to {client_ip_addr}.")
+    except ConnectionClosed:
+         logger.warning(f"WebSocket client {client_ip_addr} disconnected before initial data could be sent.")
+         # Le nettoyage se fera dans le bloc finally du handle_websocket principal
+    except Exception as e:
+        logger.error(f"Error sending initial data to {client_ip_addr}: {e}", exc_info=True)
+        # Le nettoyage se fera aussi dans le bloc finally principal
+
 # --- WebSocket Route ---
 @sock.route("/ws_logs")
 def handle_websocket(ws):
@@ -44,13 +61,31 @@ def handle_websocket(ws):
     logger.info(f"WebSocket client connected: {client_ip}")
     connected_clients.add(ws) # Ajouter au set partagé
 
+    # Lancer l'envoi des données initiales dans un thread séparé
+    initial_send_thread = threading.Thread(target=send_initial_data, args=(ws, client_ip), daemon=True)
+    initial_send_thread.start()
+
+    # Boucle pour maintenir la connexion et recevoir potentiellement des commandes
     try:
-        # Envoyer confirmation et état initial
-        ws.send(json.dumps({"type": "info", "message": "Connected to backend WebSocket."}))
-        broadcast_state_update() # Envoyer état actuel (inclut config, ticker, historique)
-    except ConnectionClosed:
-         logger.warning(f"WebSocket client {client_ip} disconnected immediately.")
-         if ws in connected_clients: connected_clients.remove(ws)
+        while True:
+            message = ws.receive(timeout=30) # Timeout pour ping périodique
+            if message is not None:
+                logger.debug(f"Received WS message from {client_ip}: {message}")
+                # Traiter commandes futures ici...
+            else:
+                # Timeout -> Envoyer ping
+                try:
+                    ws.send(json.dumps({"type": "ping"}))
+                except ConnectionClosed:
+                    logger.info(f"WebSocket client {client_ip} disconnected (ping failed).")
+                    break
+                except Exception as e:
+                    logger.warning(f"Error sending ping to {client_ip}: {e}")
+                    break # Sortir si erreur ping
+    except ConnectionClosed as e:
+         close_reason = getattr(e, 'reason', 'No reason')
+         close_code = getattr(e, 'code', 'N/A')
+         logger.info(f"WebSocket client {client_ip} disconnected: {close_reason} ({close_code})")
          return
     except Exception as e:
         logger.warning(f"Error sending initial message/state to {client_ip}: {e}")

@@ -369,9 +369,17 @@ class StateManager:
                             entry_details_reloaded = {}
                             for key, val_str in loaded_entry_details_str.items():
                                 if key in ["avg_price", "quantity", "sl_price", "tp1_price", "tp2_price", "highest_price", "lowest_price"]:
-                                    entry_details_reloaded[key] = Decimal(val_str)
+                                    # Check if val_str is not None before converting to Decimal
+                                    if val_str is not None:
+                                        entry_details_reloaded[key] = Decimal(str(val_str)) # Ensure it's string before Decimal
+                                    else:
+                                        entry_details_reloaded[key] = None # Keep None if loaded as null
                                 elif key == "timestamp":
-                                    entry_details_reloaded[key] = int(val_str)
+                                     # Check if val_str is not None before converting to int
+                                    if val_str is not None:
+                                        entry_details_reloaded[key] = int(val_str)
+                                    else:
+                                         entry_details_reloaded[key] = None # Or handle as error? Keep None for now.
                                 else:
                                     entry_details_reloaded[key] = val_str
                             self._bot_state["entry_details"] = entry_details_reloaded

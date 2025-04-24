@@ -118,6 +118,21 @@ def broadcast_order_history_update():
         logger.error(f"Erreur dans broadcast_order_history_update: {e}", exc_info=True)
 
 
+def broadcast_stats_update(session_id: int):
+    """Récupère les stats pour une session et les diffuse."""
+    # Import local
+    import db
+    try:
+        if session_id is not None:
+            stats = db.get_stats(session_id=session_id)
+            logger.info(f"Broadcasting stats update for session {session_id}...")
+            broadcast_message({"type": "stats_update", "stats": stats, "session_id": session_id})
+        else:
+            logger.warning("broadcast_stats_update: No session ID provided.")
+    except Exception as e:
+        logger.error(f"Erreur dans broadcast_stats_update for session {session_id}: {e}", exc_info=True)
+
+
 # --- AJOUT DE LA FONCTION MANQUANTE ---
 def broadcast_ticker_update(ticker_data: Dict[str, Any]):
     """Diffuse uniquement les données du ticker aux clients."""
@@ -162,6 +177,7 @@ __all__ = [
     "broadcast_state_update",
     "broadcast_order_history_update",
     "broadcast_ticker_update",
-    "broadcast_signal_event",  # Export de la nouvelle fonction
+    "broadcast_signal_event",
+    "broadcast_stats_update", # Export de la nouvelle fonction
 ]
 # --- FIN MODIFIÉ ---

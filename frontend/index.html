@@ -55,9 +55,7 @@
                  <span id="session-status-indicator" style="margin-left: 15px; font-weight: bold;"></span>
             </div>
         </section>
-        <!-- FIN NOUVELLE SECTION -->
-
-        <div id="signals-output" style="max-height:7.5em; overflow-y:auto; margin-bottom:15px;"></div>
+        
 
         <section id="order-history">
             <h2>Historique des Ordres (Session <span id="history-session-id">N/A</span>)</h2> <!-- Titre modifié -->
@@ -177,7 +175,7 @@
     <!-- DataTables JS -->
     <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <!-- Notre script -->
-    <script src="script.js"></script>
+    <script type="module" src="main.js"></script> <!-- Charger le script principal comme module -->
 </body>
 
 </html>
