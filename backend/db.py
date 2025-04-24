@@ -2,7 +2,7 @@
 import sqlite3
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone # Import timezone
 import logging
 import decimal
 from decimal import Decimal  # Import Decimal for stats calculation
@@ -203,7 +203,7 @@ def save_order(
                     float(order_data.get("pnl") or 0.0),
                     order_data.get("performance_pct"),
                     # session_id was here before, removed as it's now a dedicated column
-                    order_data.get("created_at", datetime.utcnow().isoformat()),
+                    order_data.get("created_at", datetime.now(timezone.utc).isoformat()), # Use timezone-aware UTC now
                     order_data.get("closed_at"),
                 ),
             )
@@ -388,8 +388,9 @@ def create_new_session(
     Returns the new session ID on success, None on failure.
     """
     logger.info(f"Attempting to create a new session for strategy: {strategy}")
-    now_ms = int(datetime.utcnow().timestamp() * 1000)
-    session_name = name or f"{strategy}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    now_utc = datetime.now(timezone.utc) # Use timezone-aware UTC now
+    now_ms = int(now_utc.timestamp() * 1000)
+    session_name = name or f"{strategy}_{now_utc.strftime('%Y%m%d_%H%M%S')}" # Use the same aware object
     if not isinstance(config_snapshot_json, str):
         logger.error(
             "Failed to create session: config_snapshot_json must be a JSON string."
@@ -452,7 +453,7 @@ def end_session(session_id: int, final_status: str = "completed") -> bool:
     if final_status not in ["completed", "aborted"]:
         logger.error(f"Invalid final status '{final_status}' for ending session.")
         return False
-    now_ms = int(datetime.utcnow().timestamp() * 1000)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000) # Use timezone-aware UTC now
     try:
         with get_conn() as conn:
             cursor = conn.cursor()
@@ -606,7 +607,7 @@ if __name__ == "__main__":
             # --- Test Order Saving within Session ---
             print("\n--- Testing Order Saving ---")
             dummy_order = {
-                "timestamp": int(datetime.utcnow().timestamp() * 1000),
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000), # Use timezone-aware UTC now
                 "orderId": f"test_{int(time.time())}",
                 "clientOrderId": "test_client_id_sess",
                 "symbol": "ETHUSDT",
@@ -617,7 +618,7 @@ if __name__ == "__main__":
                 "executedQty": "0.1",
                 "cummulativeQuoteQty": "300.0",
                 "status": "FILLED",
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(), # Use timezone-aware UTC now
                 # performance_pct would be added on SELL typically
             }
             # Only save if session_id is valid (which it is inside this block)

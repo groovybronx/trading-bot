@@ -71,6 +71,7 @@ class StateManager:
             "stop_keepalive_requested": False,
             "last_order_timestamp": None,
             "_active_session_id": None, # NEW: To store the current DB session ID
+            "_last_entry_client_id": None, # NEW: Stores the generated clientOrderId for the last ENTRY attempt
         }
 
         self._load_persistent_data() # Loads only position state now
@@ -438,6 +439,24 @@ class StateManager:
                 # Note: We don't save this to persistent file, it's determined at runtime
             else:
                 logger.debug(f"StateManager: Active session ID already set to: {session_id}")
+
+    # --- NEW: Last Entry Client ID Management ---
+    def set_last_entry_client_id(self, client_id: Optional[str]):
+        """Stores the client_id generated for the last entry attempt."""
+        with self._config_state_lock:
+            logger.debug(f"StateManager: Setting last entry client ID to: {client_id}")
+            self._bot_state["_last_entry_client_id"] = client_id
+
+    def get_and_clear_last_entry_client_id(self) -> Optional[str]:
+        """Retrieves and clears the last stored entry client ID."""
+        with self._config_state_lock:
+            last_id = self._bot_state.get("_last_entry_client_id")
+            if last_id:
+                logger.debug(f"StateManager: Getting and clearing last entry client ID: {last_id}")
+                self._bot_state["_last_entry_client_id"] = None
+            else:
+                 logger.debug("StateManager: No last entry client ID found to get and clear.")
+            return last_id
 
 
 # --- Instanciation Singleton ---

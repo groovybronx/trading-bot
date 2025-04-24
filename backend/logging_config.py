@@ -41,7 +41,7 @@ class WebSocketLogHandler(logging.Handler):
 def setup_logging(log_queue: queue.Queue):  # Ne prend plus ws_clients_set
     """Configure le système de logging."""
     log_format = "%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s"  # Format plus détaillé
-    log_level = logging.INFO  # Niveau global (était DEBUG)
+    log_level = logging.WARNING  # Niveau global (était INFO)
     formatter = logging.Formatter(log_format)
 
     # Configurer le logger root

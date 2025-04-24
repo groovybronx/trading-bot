@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 import numpy as np  # Import numpy for NaN comparison if needed
-from datetime import datetime  # Import datetime for formatting
+from datetime import datetime, timezone  # Import datetime and timezone
 
 # --- Gestionnaires et Wrapper ---
 from manager.state_manager import state_manager
@@ -98,25 +98,60 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
         )
         return
 
-    sl_price_from_signal = kwargs.get("sl_price")
-    tp1_price_from_signal = kwargs.get("tp1_price")
-    tp2_price_from_signal = kwargs.get("tp2_price")
+    # --- Moved SL/TP retrieval and storage EARLIER ---
+    # Récupérer SL/TP depuis order_params (fourni par la stratégie)
+    sl_price = order_params.get("sl_price")
+    tp1_price = order_params.get("tp1_price")
+    tp2_price = order_params.get("tp2_price")
+
+    # Générer l'ID client
+    client_order_id = f"bot_{action.lower()}_{int(time.time()*1000)}"
+
+    # Stocker les détails SL/TP IMMÉDIATEMENT si c'est une entrée et que SL est valide
+    # ET stocker l'ID client généré dans le state manager
+    pending_details_stored = False
+    if action == "ENTRY":
+        # Convertir en Decimal pour la vérification, si ce n'est pas déjà fait
+        try:
+            sl_price_dec = Decimal(str(sl_price)) if sl_price is not None else None
+        except (InvalidOperation, TypeError):
+            sl_price_dec = None
+            logger.warning(
+                f"Could not convert sl_price '{sl_price}' to Decimal for validation."
+            )
+
+        if sl_price_dec is not None and sl_price_dec > 0:
+            state_manager.store_pending_order_details(
+                client_order_id,
+                {
+                    "sl_price": sl_price,  # Stocker la valeur originale (probablement float)
+                    "tp1_price": tp1_price,
+                    "tp2_price": tp2_price,
+                },
+            )
+            pending_details_stored = True
+            state_manager.set_last_entry_client_id(
+                client_order_id
+            )  # Store the generated ID
+            logger.debug(
+                f"Stored pending SL/TP and last_entry_client_id for {client_order_id} (SL: {sl_price}, TP1: {tp1_price}, TP2: {tp2_price})"
+            )
+        else:
+            logger.debug(
+                f"SL price invalid ({sl_price}) or not found in order_params for ENTRY action, ClientID {client_order_id}. Not storing pending details or last_entry_client_id."
+            )
+            state_manager.set_last_entry_client_id(
+                None
+            )  # Ensure it's cleared if not stored
+    # --- End moved section ---
 
     order_result = None
-    client_order_id = f"bot_{action.lower()}_{int(time.time()*1000)}"
     order_params_with_cid = order_params.copy()
+    # Remove SL/TP from params sent to API/OrderManager if they exist, they are handled internally
+    order_params_with_cid.pop("sl_price", None)
+    order_params_with_cid.pop("tp1_price", None)
+    order_params_with_cid.pop("tp2_price", None)
     order_params_with_cid["newClientOrderId"] = client_order_id
-
-    if action == "ENTRY" and sl_price_from_signal is not None:
-        state_manager.store_pending_order_details(
-            client_order_id,
-            {
-                "sl_price": sl_price_from_signal,
-                "tp1_price": tp1_price_from_signal,
-                "tp2_price": tp2_price_from_signal,
-            },
-        )
-        logger.debug(f"Stored pending SL/TP for clientOrderId {client_order_id}")
 
     state_manager.set_last_order_timestamp(now_ms)
 
@@ -148,6 +183,17 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
                 f"Market BUY with quoteOrderQty detected. Using direct binance_client_wrapper.place_order for ClientID {client_order_id}."
             )
             order_result = binance_client_wrapper.place_order(**order_params_with_cid)
+            # --- Added Logging for ClientID comparison ---
+            if order_result:
+                api_returned_cid = order_result.get("clientOrderId")
+                logger.info(
+                    f"MARKET BUY Direct Call: Generated ClientID='{client_order_id}', API Returned ClientID='{api_returned_cid}'"
+                )
+            else:
+                logger.warning(
+                    f"MARKET BUY Direct Call: No result returned from API for Generated ClientID='{client_order_id}'"
+                )
+            # --- End Added Logging ---
         elif qty_float is not None:
             order_result = order_manager.place_order(
                 symbol=order_params_with_cid["symbol"],
@@ -186,8 +232,18 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
                 logger.warning(
                     f"Order {order_id} (ClientID: {api_client_order_id}, Action: {action}) failed immediately via API (Status: {status})."
                 )
-                if action == "ENTRY" and api_client_order_id:
-                    state_manager.clear_pending_order_details(api_client_order_id)
+                # --- Cleanup pending details AND last_entry_client_id if order failed immediately ---
+                if (
+                    action == "ENTRY" and pending_details_stored
+                ):  # Check if we stored details
+                    state_manager.clear_pending_order_details(
+                        client_order_id
+                    )  # Use generated client_order_id
+                    state_manager.set_last_entry_client_id(None)  # Clear stored ID
+                    logger.debug(
+                        f"Cleared pending details and last_entry_client_id for failed order ClientID: {client_order_id}"
+                    )
+                # --- End Cleanup ---
                 current_status = state_manager.get_state("status")
                 if current_status in ["ENTERING", "EXITING"]:
                     state_updates = {
@@ -201,8 +257,18 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
             logger.error(
                 f"Order Placement FAILED ({action}) via API for {symbol}. No valid result/orderId. ClientID: {client_order_id}. Response: {order_result}"
             )
-            if action == "ENTRY" and client_order_id:
-                state_manager.clear_pending_order_details(client_order_id)
+            # --- Cleanup pending details AND last_entry_client_id if order placement failed completely ---
+            if (
+                action == "ENTRY" and pending_details_stored
+            ):  # Check if we stored details
+                state_manager.clear_pending_order_details(
+                    client_order_id
+                )  # Use generated client_order_id
+                state_manager.set_last_entry_client_id(None)  # Clear stored ID
+                logger.debug(
+                    f"Cleared pending details and last_entry_client_id for failed order placement ClientID: {client_order_id}"
+                )
+            # --- End Cleanup ---
             current_status = state_manager.get_state("status")
             if current_status in ["ENTERING", "EXITING"]:
                 state_updates = {
@@ -217,13 +283,16 @@ def _execute_order_thread(order_params: Dict[str, Any], action: str, **kwargs):
             f"CRITICAL Error during {action} order placement thread for {symbol}: {e}",
             exc_info=True,
         )
-        client_order_id_on_error = (
-            order_params_with_cid.get("newClientOrderId")
-            if "order_params_with_cid" in locals()
-            else None
-        )
-        if action == "ENTRY" and client_order_id_on_error:
-            state_manager.clear_pending_order_details(client_order_id_on_error)
+        # --- Cleanup pending details AND last_entry_client_id on exception ---
+        if action == "ENTRY" and pending_details_stored:  # Check if we stored details
+            state_manager.clear_pending_order_details(
+                client_order_id
+            )  # Use generated client_order_id
+            state_manager.set_last_entry_client_id(None)  # Clear stored ID
+            logger.debug(
+                f"Cleared pending details and last_entry_client_id due to exception for ClientID: {client_order_id}"
+            )
+        # --- End Cleanup ---
         state_updates = {
             "status": "ERROR",
             "open_order_id": None,
@@ -407,6 +476,9 @@ def process_book_ticker_message(msg: Dict[str, Any]):
             return
 
         state_manager.update_book_ticker(msg)
+        broadcast_ticker_update(
+            msg
+        )  # <-- AJOUT: Diffuser la mise à jour du ticker au frontend
 
         strategy_type = current_config.get("STRATEGY_TYPE")
         is_in_position = current_state.get("in_position", False)
@@ -794,12 +866,12 @@ def _format_execution_report_for_db(exec_report: Dict[str, Any]) -> Dict[str, An
         "performance_pct": performance_pct,
         # "session_id": session_id, # No longer needed here, passed to save_order
         "created_at": (
-            datetime.utcfromtimestamp(timestamp / 1000).isoformat()
+            datetime.fromtimestamp(timestamp / 1000, timezone.utc).isoformat()
             if timestamp
-            else datetime.utcnow().isoformat()
+            else datetime.now(timezone.utc).isoformat()
         ),
         "closed_at": (
-            datetime.utcfromtimestamp(timestamp / 1000).isoformat()
+            datetime.fromtimestamp(timestamp / 1000, timezone.utc).isoformat()
             if timestamp and status in ["FILLED", "CANCELED", "EXPIRED", "REJECTED"]
             else None
         ),
@@ -837,12 +909,13 @@ def _handle_execution_report(data: dict):
     if formatted_data_for_db and active_session_id is not None:
         save_success = db.save_order(formatted_data_for_db, active_session_id)
         if save_success:
-            broadcast_order_history_update() # Broadcast history update
+            broadcast_order_history_update()  # Broadcast history update
             # Check if the order status implies the trade/stats might have changed
             if status in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
-                 # Import locally to avoid circular dependency at top level
-                 from utils.websocket_utils import broadcast_stats_update
-                 broadcast_stats_update(active_session_id) # Broadcast stats update
+                # Import locally to avoid circular dependency at top level
+                from utils.websocket_utils import broadcast_stats_update
+
+                broadcast_stats_update(active_session_id)  # Broadcast stats update
         else:
             # Error already logged in save_order if it failed
             logger.error(
@@ -896,13 +969,27 @@ def _handle_execution_report(data: dict):
                     logger.info(
                         f"ExecutionReport (FILLED BUY): Entering position. AvgPrice={avg_price:.4f}, Qty={filled_qty}"
                     )
-                    pending_details = (
-                        state_manager.get_and_clear_pending_order_details(
-                            client_order_id
-                        )
-                        if isinstance(client_order_id, str)
-                        else None
+                    # --- Use stored last_entry_client_id to retrieve details ---
+                    last_entry_id = state_manager.get_and_clear_last_entry_client_id()
+                    logger.debug(
+                        f"Attempting to retrieve pending details using last stored entry ClientID: {last_entry_id}"
                     )
+                    pending_details = None
+                    if last_entry_id:
+                        pending_details = (
+                            state_manager.get_and_clear_pending_order_details(
+                                last_entry_id
+                            )
+                        )
+                        logger.debug(
+                            f"Retrieved pending details using {last_entry_id}: {pending_details}"
+                        )
+                    else:
+                        logger.warning(
+                            f"No last_entry_client_id was stored. Cannot retrieve pending details reliably for order {order_id} (API ClientID: {client_order_id})."
+                        )
+                    # --- End modification ---
+
                     sl_price = (
                         pending_details.get("sl_price") if pending_details else None
                     )
@@ -912,9 +999,10 @@ def _handle_execution_report(data: dict):
                     tp2_price = (
                         pending_details.get("tp2_price") if pending_details else None
                     )
+                    # Log warning using the API's client_order_id for reference
                     if sl_price is None and client_order_id:
                         logger.warning(
-                            f"ExecutionReport (FILLED BUY): Could not retrieve pending SL/TP for ClientID {client_order_id}."
+                            f"ExecutionReport (FILLED BUY): Could not retrieve pending SL/TP for API ClientID {client_order_id} (used stored ID: {last_entry_id})."
                         )
 
                     state_updates["in_position"] = True
@@ -951,6 +1039,7 @@ def _handle_execution_report(data: dict):
                 logger.warning(
                     f"ExecutionReport (FILLED): Order {order_id} (ClientID: {client_order_id}) has zero filled quantity?"
                 )
+                # Clear pending details using API's client_order_id just in case (might be redundant)
                 if current_status == "ENTERING" and client_order_id:
                     state_manager.clear_pending_order_details(client_order_id)
                 if current_status in ["ENTERING", "EXITING"]:
@@ -963,12 +1052,19 @@ def _handle_execution_report(data: dict):
                 f"ExecutionReport (FILLED): Error processing order {order_id} (ClientID: {client_order_id}): {e}",
                 exc_info=True,
             )
+            # Clear pending details using API's client_order_id just in case (might be redundant)
             if current_status == "ENTERING" and client_order_id:
                 state_manager.clear_pending_order_details(client_order_id)
             state_updates["status"] = "ERROR"
 
     if state_updates:
         state_manager.update_state(state_updates)
+        # --- Added Broadcast ---
+        # Broadcast the state update AFTER it has been applied by state_manager
+        # update_state handles saving, but not broadcasting anymore
+        broadcast_state_update()
+        logger.debug("Broadcasted state update after handling execution report.")
+        # --- End Added Broadcast ---
 
 
 def _handle_account_position(data: dict):
@@ -1015,6 +1111,11 @@ def _handle_account_position(data: dict):
 
     if state_updates:
         state_manager.update_state(state_updates)
+        # --- Added Broadcast ---
+        # Broadcast the state update AFTER it has been applied by state_manager
+        broadcast_state_update()
+        logger.debug("Broadcasted state update after handling account position.")
+        # --- End Added Broadcast ---
 
 
 def _handle_balance_update(data: dict):

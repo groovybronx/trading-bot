@@ -11,6 +11,12 @@ Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagn�
 - **Correction d’erreurs Pylance/Pyright** : Les erreurs de type liées à l’utilisation de `Decimal` dans les dictionnaires d’ordres ont été corrigées.
 - **Documentation** : Ajout d’exemples de scripts de test d’ordre (`backend/test_place_order.py`, `backend/test_scalping2_order.py`) pour valider la logique de sizing et la compatibilité API.
 
+### 2025-04-24
+- **Filtrage par session** : L’historique des ordres et les statistiques affichés dans le dashboard concernent uniquement la session courante (depuis le dernier reset). Un identifiant de session unique est utilisé pour chaque session.
+- **Colonnes supplémentaires dans l’historique** :
+  - Colonne “Stratégie” : Affiche la stratégie utilisée pour chaque ordre.
+  - Colonne “Valeur (quote)” : Affiche la valeur de l’ordre en quote asset (ex : USDT).
+
 ## Fonctionnalités
 
 *   **Connexion Binance :** Utilise l'API REST et les WebSockets de Binance (Spot).
@@ -151,6 +157,8 @@ Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagn�
 
 *   **Statut du Bot :** Affiche l'état actuel, la stratégie, le symbole, les balances, le prix et la position.
 *   **Historique des Ordres :** Liste les ordres récents récupérés via l'API REST. Les lignes BUY/SELL peuvent avoir des styles distincts, et la performance est calculée pour les trades SELL fermant une position BUY précédente (basé sur l'historique interne).
+    *   **Nouveau :** L’historique n’affiche que les ordres de la session courante (depuis le dernier reset).
+    *   **Nouveau :** Deux colonnes supplémentaires sont présentes : “Stratégie” (stratégie utilisée pour l’ordre) et “Valeur (quote)” (valeur de l’ordre en quote asset, ex : USDT).
 *   **Logs :** Affiche les messages de log provenant du backend en temps réel.
 *   **Contrôles :**
     *   `Démarrer le Bot` : Lance le processus principal du bot (`bot_core`).

@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional, Dict, Any, Tuple, List
 import dotenv
 import json
-from datetime import datetime  # Import datetime for created_at in refresh_order_history
+from datetime import datetime, timezone # Import datetime and timezone
 
 dotenv.load_dotenv()
 
@@ -59,7 +59,7 @@ def run_bot():
         state_manager.update_state({"status": "ERROR", "stop_main_requested": True})
         # broadcast_state_update() # State update now saves and broadcasts
     finally:
-        logger.info("Run Bot Thread: Finishing.")
+        #logger.info("Run Bot Thread: Finishing.")
         current_status = state_manager.get_state("status")
         if current_status not in ["STOPPING", "STOPPED", "ERROR"]:
             state_manager.update_state({"status": "STOPPED"})
@@ -71,7 +71,7 @@ def run_bot():
 # --- Thread Keepalive (Unchanged) ---
 def run_keepalive():
     """Thread pour renouveler le listenKey."""
-    logger.info("Keepalive Thread: Started.")
+    #info("Keepalive Thread: Started.")
     while not state_manager.get_state("stop_keepalive_requested"):
         listen_key = state_manager.get_state("listen_key")
         if listen_key:
@@ -183,23 +183,9 @@ def refresh_order_history_via_rest(
                 "performance_pct": None,
                 # "session_id": session_id, # No longer needed here, passed to save_order
                 # Use 'time' for created_at if available
-                "created_at": (
-                    datetime.utcfromtimestamp(
-                        order_rest_data.get("time", 0) / 1000
-                    ).isoformat()
-                    if order_rest_data.get("time")
-                    else None
-                ),
+                "created_at": (datetime.fromtimestamp(order_rest_data.get("time", 0) / 1000, timezone.utc).isoformat() if order_rest_data.get("time") else None),
                 # 'closed_at' could be derived from updateTime if status is final, but complex
-                "closed_at": (
-                    datetime.utcfromtimestamp(
-                        order_rest_data.get("updateTime", 0) / 1000
-                    ).isoformat()
-                    if order_rest_data.get("updateTime")
-                    and order_rest_data.get("status")
-                    in ["FILLED", "CANCELED", "EXPIRED", "REJECTED"]
-                    else None
-                ),
+                "closed_at": (datetime.fromtimestamp(order_rest_data.get("updateTime", 0) / 1000, timezone.utc).isoformat() if order_rest_data.get("updateTime") and order_rest_data.get("status") in ["FILLED", "CANCELED", "EXPIRED", "REJECTED"] else None),
             }
 
             # Pass session_id to save_order
@@ -224,18 +210,18 @@ def refresh_order_history_via_rest(
 
 def _initialize_client_and_config() -> bool:
     """Initialise client Binance et charge config."""
-    logger.info("Start Core: Initializing Binance Client...")
+    #logger.info("Start Core: Initializing Binance Client...")
     if binance_client_wrapper.get_client() is None:
         state_manager.update_state({"status": "ERROR"})
         broadcast_state_update()  # Notify frontend of the error state
         return False
-    logger.info("Start Core: Binance Client initialized. Config loaded.")
+    #logger.info("Start Core: Binance Client initialized. Config loaded.")
     return True
 
 
 def _load_and_prepare_state() -> bool:
     """Charge état persistant, récupère infos symbole/balances initiales."""
-    logger.info("Start Core: Loading state & preparing initial data...")
+    #logger.info("Start Core: Loading state & preparing initial data...")
     current_state = state_manager.get_state()  # Loads position state from file
     logger.info(
         f"Start Core: State loaded (in_position={current_state.get('in_position')})."
@@ -314,7 +300,7 @@ def _prefetch_kline_history() -> bool:
     """Précharge historique klines pour SWING ou SCALPING2."""
     strategy_type = config_manager.get_value("STRATEGY_TYPE")
     if strategy_type not in ["SWING", "SCALPING2"]:
-        logger.info(f"Start Core ({strategy_type}): Kline prefetch skipped.")
+        #logger.info(f"Start Core ({strategy_type}): Kline prefetch skipped.")
         state_manager.clear_kline_history()
         return True
 
@@ -653,8 +639,9 @@ def start_bot_core() -> tuple[bool, str]:
     # --- NEW: Initialize or Get Active Session ---
     logger.info("Start Core: Initializing DB session...")
     current_strategy = config_manager.get_value("STRATEGY_TYPE", "UNKNOWN")
-    active_session_data = db.get_active_session(strategy=current_strategy)
+    active_session_data = db.get_active_session(strategy=current_strategy) # Try to get existing active session
     active_session_id = None
+
     if active_session_data:
         active_session_id = active_session_data.get("id")
         logger.info(f"Start Core: Found existing active session ID: {active_session_id} for strategy {current_strategy}.")
@@ -663,13 +650,23 @@ def start_bot_core() -> tuple[bool, str]:
         # Get current config as JSON string
         current_config_dict = config_manager.get_config()
         config_json = json.dumps(current_config_dict, default=str) # Use default=str for Decimal etc.
-        active_session_id = db.create_new_session(strategy=current_strategy, config_snapshot_json=config_json)
-        if not active_session_id:
+        new_session_id = db.create_new_session(strategy=current_strategy, config_snapshot_json=config_json)
+        if not new_session_id:
             logger.error("Start Core: Failed to create a new DB session (with config snapshot). Aborting start.")
             state_manager.update_state({"status": "ERROR"})
             broadcast_state_update()
             return False, "Échec création session DB."
-        logger.info(f"Start Core: Created new session ID: {active_session_id}.")
+        logger.info(f"Start Core: Created new session ID: {new_session_id}.")
+        active_session_id = new_session_id
+        # --- ADDED: Fetch the newly created session data ---
+        active_session_data = db.get_active_session(strategy=current_strategy)
+        if not active_session_data or active_session_data.get("id") != active_session_id:
+             logger.error(f"Start Core: Failed to retrieve data for newly created session {active_session_id}. Aborting start.")
+             state_manager.update_state({"status": "ERROR"})
+             broadcast_state_update()
+             return False, "Échec récupération données nouvelle session DB."
+        logger.info(f"Start Core: Successfully retrieved data for new session {active_session_id}.")
+        # --- END ADDED ---
 
     # Store the active session ID in the state manager
     state_manager.set_active_session_id(active_session_id)
@@ -677,11 +674,20 @@ def start_bot_core() -> tuple[bool, str]:
 
 
     # --- Initial Order History Sync (Now uses active session and filters by start time) ---
+    # Extract session_start_time AFTER potentially creating and fetching the new session data
     session_start_time = active_session_data.get("start_time") if active_session_data else None
+
+    if session_start_time is None:
+        logger.error(f"Start Core: Could not determine session start time for session {active_session_id}. Aborting history sync.")
+        # Decide if this is critical - maybe continue without sync? For now, let's make it critical for consistency.
+        state_manager.update_state({"status": "ERROR"})
+        broadcast_state_update()
+        return False, "Échec détermination heure début session."
+
     logger.info(
         f"Start Core: Performing initial order history sync from REST API to DB for session {active_session_id} (Start Time: {session_start_time})..."
     )
-    # Pass session_start_time to the refresh function
+    # Pass session_start_time to the refresh function (now guaranteed not None)
     refresh_order_history_via_rest(session_start_time_ms=session_start_time, limit=200)
     logger.info("Start Core: Initial order history sync completed.")
     # --- End Modified ---
@@ -791,4 +797,5 @@ __all__ = [
     "stop_bot_core",
     # "cancel_scalping_order", # Moved to websocket_handlers.py
     "refresh_order_history_via_rest",
+    
 ]

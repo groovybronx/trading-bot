@@ -34,9 +34,9 @@
                 <ul>
                     <li>ROI : <span id="stat-roi">N/A</span></li>
                     <li>Winrate : <span id="stat-winrate">N/A</span></li>
-                    <li>Ordres gagnants : <span id="stat-wins">N/A</span></li>
-                    <li>Ordres perdants : <span id="stat-losses">N/A</span></li>
-                    <li>Nombre total d'ordres : <span id="stat-total">N/A</span></li>
+                    <li>Trades gagnants : <span id="stat-wins">N/A</span></li>
+                    <li>Trades perdants : <span id="stat-losses">N/A</span></li>
+                    <li>Nombre total Trades : <span id="stat-total">N/A</span></li>
                     <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
                 </ul>
             </section>
@@ -108,14 +108,14 @@
             </div>
             <hr>
             <section id="general-params">
-                <h3>Paramètres Généraux (Communs à toutes les stratégies)</h3>
+                <h3>Paramètres Généraux </h3>
                 <div class="param-grid">
-                    <div><label for="param-risk">Risque par ordre (%) :</label><input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="100" step="0.1"></div>
-                    <div><label for="param-capital-allocation">Capital investi (%) :</label><input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100" step="1"></div>
-                    <div><label for="param-sl">Stop Loss (%) :</label><input type="number" id="param-sl" name="STOP_LOSS_PERCENTAGE" min="0.1" max="20" step="0.1"></div>
-                    <div><label for="param-tp1">Take Profit 1 (%) :</label><input type="number" id="param-tp1" name="TAKE_PROFIT_1_PERCENTAGE" min="0.1" max="50" step="0.1"></div>
-                    <div><label for="param-tp2">Take Profit 2 (%) :</label><input type="number" id="param-tp2" name="TAKE_PROFIT_2_PERCENTAGE" min="0.1" max="50" step="0.1"></div>
-                    <div><label for="param-trailing">Trailing Stop (%) :</label><input type="number" id="param-trailing" name="TRAILING_STOP_PERCENTAGE" min="0.1" max="10" step="0.1"></div>
+                    <div><label for="param-risk">Risque par ordre (%) <span style="font-weight:normal;font-size:0.95em;"></span> :</label><input type="number" id="param-risk" name="RISK_PER_TRADE" min="0.1" max="100" step="0.1"></div>
+                    <div><label for="param-capital-allocation">Capital investi (%) <span style="font-weight:normal;font-size:0.95em;">(Ex : 10 pour 10%)</span> :</label><input type="number" id="param-capital-allocation" name="CAPITAL_ALLOCATION" min="1" max="100" step="1"></div>
+                    <div><label for="param-sl">Stop Loss (%) <span style="font-weight:normal;font-size:0.95em;"></span> :</label><input type="number" id="param-sl" name="STOP_LOSS_PERCENTAGE" min="0.1" max="20" step="0.1"></div>
+                    <div><label for="param-tp1">Take Profit 1 (%) <span style="font-weight:normal;font-size:0.95em;"></span> :</label><input type="number" id="param-tp1" name="TAKE_PROFIT_1_PERCENTAGE" min="0.1" max="50" step="0.1"></div>
+                    <div><label for="param-tp2">Take Profit 2 (%) <span style="font-weight:normal;font-size:0.95em;"></span> :</label><input type="number" id="param-tp2" name="TAKE_PROFIT_2_PERCENTAGE" min="0.1" max="50" step="0.1"></div>
+                    <div><label for="param-trailing">Trailing Stop (%) <span style="font-weight:normal;font-size:0.95em;"></span> :</label><input type="number" id="param-trailing" name="TRAILING_STOP_PERCENTAGE" min="0.1" max="10" step="0.1"></div>
                     <div><label for="param-time-stop">Time Stop (minutes) :</label><input type="number" id="param-time-stop" name="TIME_STOP_MINUTES" min="1" max="240" step="1"></div>
                     <div><label for="param-order-cooldown">Délai minimum entre ordres (ms) :</label><input type="number" id="param-order-cooldown" name="ORDER_COOLDOWN_MS" min="0" step="100"></div>
                 </div>

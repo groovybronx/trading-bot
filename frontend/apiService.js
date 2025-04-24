@@ -101,15 +101,17 @@ export async function saveParameters() {
 
     try {
         // Collect parameters using safeValue from utils.js and DOM elements
+        // Les valeurs de type pourcentage doivent être saisies en pourcentage (ex: 0.5 pour 0.5%)
+        // et seront converties en fraction ici (division par 100)
         const paramsToSend = {
             STRATEGY_TYPE: safeValue(DOM.strategySelector),
             TIMEFRAME: safeValue(DOM.paramTimeframe),
-            RISK_PER_TRADE: safeValue(DOM.paramRisk, parseFloat),
-            CAPITAL_ALLOCATION: safeValue(DOM.paramCapitalAllocation, parseFloat),
-            STOP_LOSS_PERCENTAGE: safeValue(DOM.paramSl, parseFloat),
-            TAKE_PROFIT_1_PERCENTAGE: safeValue(DOM.paramTp1, parseFloat),
-            TAKE_PROFIT_2_PERCENTAGE: safeValue(DOM.paramTp2, parseFloat),
-            TRAILING_STOP_PERCENTAGE: safeValue(DOM.paramTrailing, parseFloat),
+            RISK_PER_TRADE: safeValue(DOM.paramRisk, v => parseFloat(v) ),
+            CAPITAL_ALLOCATION: safeValue(DOM.paramCapitalAllocation, v => parseFloat(v) ),
+            STOP_LOSS_PERCENTAGE: safeValue(DOM.paramSl, v => parseFloat(v) ), // Saisir en % (ex: 0.5 pour 0.5%)
+            TAKE_PROFIT_1_PERCENTAGE: safeValue(DOM.paramTp1, v => parseFloat(v) ), // Saisir en %
+            TAKE_PROFIT_2_PERCENTAGE: safeValue(DOM.paramTp2, v => parseFloat(v) ), // Saisir en %
+            TRAILING_STOP_PERCENTAGE: safeValue(DOM.paramTrailing, v => parseFloat(v) ), // Saisir en %
             TIME_STOP_MINUTES: safeValue(DOM.paramTimeStop, v => parseInt(v, 10)),
             EMA_SHORT_PERIOD: safeValue(DOM.paramEmaShort, v => parseInt(v, 10)),
             EMA_LONG_PERIOD: safeValue(DOM.paramEmaLong, v => parseInt(v, 10)),
@@ -118,8 +120,8 @@ export async function saveParameters() {
             RSI_OVERBOUGHT: safeValue(DOM.paramRsiOb, v => parseInt(v, 10)),
             RSI_OVERSOLD: safeValue(DOM.paramRsiOs, v => parseInt(v, 10)),
             VOLUME_AVG_PERIOD: safeValue(DOM.paramVolumeAvg, v => parseInt(v, 10)),
-            USE_EMA_FILTER: safeValue(DOM.paramUseEmaFilter), // safeValue handles checkbox
-            USE_VOLUME_CONFIRMATION: safeValue(DOM.paramUseVolume), // safeValue handles checkbox
+            USE_EMA_FILTER: safeValue(DOM.paramUseEmaFilter),
+            USE_VOLUME_CONFIRMATION: safeValue(DOM.paramUseVolume),
             SCALPING_ORDER_TYPE: safeValue(DOM.paramScalpingOrderType),
             SCALPING_LIMIT_TIF: safeValue(DOM.paramScalpingLimitTif),
             SCALPING_LIMIT_ORDER_TIMEOUT_MS: safeValue(DOM.paramScalpingLimitTimeout, v => parseInt(v, 10)),
@@ -139,27 +141,13 @@ export async function saveParameters() {
             VOLUME_MA_PERIOD: safeValue(DOM.paramVolMa, v => parseInt(v, 10)),
         };
 
-        // Clean parameters: remove null/undefined/NaN and convert percentages
+        // Clean parameters: remove null/undefined/NaN
         const cleanedParamsToSend = {};
-        const percentageKeys = ['RISK_PER_TRADE', 'CAPITAL_ALLOCATION', 'STOP_LOSS_PERCENTAGE', 'TAKE_PROFIT_1_PERCENTAGE', 'TAKE_PROFIT_2_PERCENTAGE', 'TRAILING_STOP_PERCENTAGE'];
-
         for (const key in paramsToSend) {
             let value = paramsToSend[key];
-
             if (value === null || value === undefined) {
                 continue; // Skip null/undefined right away
             }
-
-            if (percentageKeys.includes(key)) {
-                if (typeof value === 'number' && !isNaN(value)) {
-                    value = value / 100.0; // Convert to fraction for backend
-                } else {
-                    console.warn(`Invalid numeric value for percentage key ${key}: ${value}. Skipping.`);
-                    continue; // Skip invalid percentage
-                }
-            }
-            // safeValue already handles NaN conversion to null for numbers, so no extra check needed here
-
             cleanedParamsToSend[key] = value;
         }
 
