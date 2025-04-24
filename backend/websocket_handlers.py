@@ -36,6 +36,7 @@ from strategies.scalping_strategy_2 import ScalpingStrategy2
 # --- Core (pour refresh ET order_manager) ---
 # Import the order_manager instance from its central location
 from manager.order_manager import order_manager
+
 # refresh_order_history_via_rest is called from bot_core during startup, no need to import here currently.
 
 
@@ -44,19 +45,27 @@ import db
 
 logger = logging.getLogger(__name__)
 
+
 # --- Moved Function ---
 def cancel_scalping_order(symbol: str, order_id: int):
     """Annule un ordre LIMIT ouvert en utilisant OrderManager."""
     # This function now resides within websocket_handlers
-    logger.info(f"Attempting to cancel Order: {order_id} on {symbol} via OrderManager...")
+    logger.info(
+        f"Attempting to cancel Order: {order_id} on {symbol} via OrderManager..."
+    )
     # Use the imported OrderManager instance to cancel the order
     success = order_manager.cancel_order(symbol=symbol, order_id=order_id)
 
     if success:
-        logger.info(f"OrderManager reported successful cancellation initiation for order {order_id}.")
+        logger.info(
+            f"OrderManager reported successful cancellation initiation for order {order_id}."
+        )
         # OrderManager handles logging and state updates internally now.
     else:
-        logger.error(f"OrderManager reported failure trying to cancel order {order_id}.")
+        logger.error(
+            f"OrderManager reported failure trying to cancel order {order_id}."
+        )
+
 
 # --- Instantiate Strategies ---
 # Instantiate strategy objects - consider loading dynamically based on config in future
@@ -515,7 +524,7 @@ def process_kline_message(msg: Dict[str, Any]):
             return
 
         if is_closed and current_status == "RUNNING":
-            logger.debug(f"Kline {symbol} ({interval}) CLOSED received.")
+            # logger.debug(f"Kline {symbol} ({interval}) CLOSED received.") # Commented out - frequent log
             formatted_kline = [
                 kline_data.get("t"),
                 kline_data.get("o"),
@@ -599,9 +608,7 @@ def process_kline_message(msg: Dict[str, Any]):
 
             # --- Strategy Logic ---
             if strategy_type == "SWING":
-                logger.debug(
-                    f"Kline WS (SWING): Calculating indicators on {len(df)} klines..."
-                )
+                # logger.debug(f"Kline WS (SWING): Calculating indicators on {len(df)} klines...") # Commented out
                 # Use the strategy instance
                 df_with_indicators = swing_strategy_instance.calculate_indicators(df)
                 if df_with_indicators.empty or len(df_with_indicators) < 1:
@@ -627,51 +634,72 @@ def process_kline_message(msg: Dict[str, Any]):
                         execute_exit(f"SWING Exit: {exit_reason}")
 
             elif strategy_type == "SCALPING2":
-                 logger.debug(f"Kline WS (SCALPING2): Calculating indicators on {len(df)} klines...")
-                 # Use the strategy instance
-                 df_with_indicators = scalping2_strategy_instance.calculate_indicators(df)
+                # logger.debug(f"Kline WS (SCALPING2): Calculating indicators on {len(df)} klines...") # Commented out
+                # Use the strategy instance
+                df_with_indicators = scalping2_strategy_instance.calculate_indicators(
+                    df
+                )
 
-                 if df_with_indicators.empty or len(df_with_indicators) < 2:
-                      logger.warning("Kline WS (SCALPING2): Failed to calculate indicators or not enough data (>=2 rows).")
-                      return
+                if df_with_indicators.empty or len(df_with_indicators) < 2:
+                    logger.warning(
+                        "Kline WS (SCALPING2): Failed to calculate indicators or not enough data (>=2 rows)."
+                    )
+                    return
 
-                 # Pass latest and previous row to check_entry_signal
-                 latest_data = df_with_indicators.iloc[-1]
-                 prev_row = df_with_indicators.iloc[-2]
-                 is_in_position = current_state.get("in_position")
+                # Pass latest and previous row to check_entry_signal
+                latest_data = df_with_indicators.iloc[-1]
+                prev_row = df_with_indicators.iloc[-2]
+                is_in_position = current_state.get("in_position")
 
-                 if not is_in_position:
-                      entry_order_params = scalping2_strategy_instance.check_entry_signal(latest_data, prev_row=prev_row)
-                      if entry_order_params:
-                           # Extract SL/TP from params for kwargs if present
-                           sl_price = entry_order_params.pop('sl_price', None)
-                           tp1_price = entry_order_params.pop('tp1_price', None)
-                           tp2_price = entry_order_params.pop('tp2_price', None)
-                           execute_entry(entry_order_params, sl_price=sl_price, tp1_price=tp1_price, tp2_price=tp2_price)
-                 elif is_in_position:
-                      # Need current price and position duration for exit check
-                      book_ticker = state_manager.get_book_ticker()
-                      current_price_str = book_ticker.get("b") # Use bid price for checking exit on LONG
-                      entry_details = current_state.get("entry_details", {})
-                      entry_timestamp_ms = entry_details.get("timestamp")
+                if not is_in_position:
+                    entry_order_params = scalping2_strategy_instance.check_entry_signal(
+                        latest_data, prev_row=prev_row
+                    )
+                    if entry_order_params:
+                        # Extract SL/TP from params for kwargs if present
+                        sl_price = entry_order_params.pop("sl_price", None)
+                        tp1_price = entry_order_params.pop("tp1_price", None)
+                        tp2_price = entry_order_params.pop("tp2_price", None)
+                        execute_entry(
+                            entry_order_params,
+                            sl_price=sl_price,
+                            tp1_price=tp1_price,
+                            tp2_price=tp2_price,
+                        )
+                elif is_in_position:
+                    # Need current price and position duration for exit check
+                    book_ticker = state_manager.get_book_ticker()
+                    current_price_str = book_ticker.get(
+                        "b"
+                    )  # Use bid price for checking exit on LONG
+                    entry_details = current_state.get("entry_details", {})
+                    entry_timestamp_ms = entry_details.get("timestamp")
 
-                      if current_price_str and entry_timestamp_ms:
-                           try:
-                                current_price_dec = Decimal(current_price_str)
-                                position_duration_seconds = int(time.time()) - int(entry_timestamp_ms / 1000)
+                    if current_price_str and entry_timestamp_ms:
+                        try:
+                            current_price_dec = Decimal(current_price_str)
+                            position_duration_seconds = int(time.time()) - int(
+                                entry_timestamp_ms / 1000
+                            )
 
-                                exit_kwargs = {
-                                     'current_price': current_price_dec,
-                                     'position_duration_seconds': position_duration_seconds
-                                }
-                                # Pass empty Series for latest_data as it's unused in check_exit_signal for SCALPING2
-                                exit_reason = scalping2_strategy_instance.check_exit_signal(pd.Series(dtype=float), entry_details, **exit_kwargs)
-                                if exit_reason:
-                                     execute_exit(f"SCALPING2 Exit: {exit_reason}")
-                           except (ValueError, TypeError, InvalidOperation) as e:
-                                logger.error(f"SCALPING2 Exit Check: Error preparing data - {e}")
-                      else:
-                           logger.warning("SCALPING2 Exit Check: Missing current price or entry timestamp.")
+                            exit_kwargs = {
+                                "current_price": current_price_dec,
+                                "position_duration_seconds": position_duration_seconds,
+                            }
+                            # Pass empty Series for latest_data as it's unused in check_exit_signal for SCALPING2
+                            exit_reason = scalping2_strategy_instance.check_exit_signal(
+                                pd.Series(dtype=float), entry_details, **exit_kwargs
+                            )
+                            if exit_reason:
+                                execute_exit(f"SCALPING2 Exit: {exit_reason}")
+                        except (ValueError, TypeError, InvalidOperation) as e:
+                            logger.error(
+                                f"SCALPING2 Exit Check: Error preparing data - {e}"
+                            )
+                    else:
+                        logger.warning(
+                            "SCALPING2 Exit Check: Missing current price or entry timestamp."
+                        )
 
     except Exception as e:
         logger.critical(
@@ -710,7 +738,15 @@ def _format_execution_report_for_db(exec_report: Dict[str, Any]) -> Dict[str, An
     timestamp = exec_report.get("T")
 
     strategy = config_manager.get_value("STRATEGY_TYPE", "UNKNOWN")
-    session_id = state_manager.get_session_id()
+    # Get the active session ID from state_manager
+    session_id = state_manager.get_active_session_id()
+    if session_id is None:
+        logger.error(
+            f"Cannot format execution report for DB: No active session ID found for order {order_id}."
+        )
+        # Return an empty dict or raise an error? Returning empty for now.
+        # This case should ideally not happen if the bot is running.
+        return {}
 
     performance_pct = None
     pnl_value = None
@@ -756,7 +792,7 @@ def _format_execution_report_for_db(exec_report: Dict[str, Any]) -> Dict[str, An
         "stopPrice": exec_report.get("P"),
         "pnl": float(pnl_value) if pnl_value is not None else None,
         "performance_pct": performance_pct,
-        "session_id": session_id,
+        # "session_id": session_id, # No longer needed here, passed to save_order
         "created_at": (
             datetime.utcfromtimestamp(timestamp / 1000).isoformat()
             if timestamp
@@ -795,15 +831,29 @@ def _handle_execution_report(data: dict):
     )
 
     formatted_data_for_db = _format_execution_report_for_db(data)
-    save_success = db.save_order(formatted_data_for_db)
-    if save_success:
-        broadcast_order_history_update()
-    else:
+    active_session_id = state_manager.get_active_session_id()  # Get session ID
+
+    # Attempt to save to DB only if formatting was successful and session ID exists
+    if formatted_data_for_db and active_session_id is not None:
+        save_success = db.save_order(formatted_data_for_db, active_session_id)
+        if save_success:
+            broadcast_order_history_update()  # Broadcast only on successful save
+        else:
+            # Error already logged in save_order if it failed
+            logger.error(
+                f"DB save failed for order {order_id}, session {active_session_id}. History broadcast skipped."
+            )
+    elif not formatted_data_for_db:
         logger.error(
-            f"Failed to save order {order_id} to database. History broadcast skipped."
+            f"Failed to format execution report for order {order_id}. DB save skipped."
+        )
+    else:  # session_id was None
+        logger.error(
+            f"Cannot save execution report for order {order_id}: No active session ID found in state manager."
         )
 
-    state_updates = {}
+    # --- Now handle state updates based on the execution report ---
+    state_updates = {}  # Initialize state updates dictionary *once*
     current_state = state_manager.get_state()
     current_open_order_id = current_state.get("open_order_id")
     current_status = current_state.get("status")

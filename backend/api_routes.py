@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request, Response
 from decimal import Decimal, InvalidOperation
 import collections
 import threading
+import json # Add this import
 
 # Gestionnaires et Core
 from manager.state_manager import state_manager
@@ -39,10 +40,9 @@ def get_status():
 
         status_data_serializable["config"] = config_manager.get_config()
         status_data_serializable["latest_book_ticker"] = state_manager.get_book_ticker()
-        # --- MODIFIED: Get history from state_manager (which gets it from DB) ---
-        strategy = status_data_serializable.get("config", {}).get("STRATEGY_TYPE")
-        status_data_serializable["order_history"] = state_manager.get_order_history(strategy=strategy)
-        # --- End Modification ---
+        # Add active session ID to status
+        status_data_serializable["active_session_id"] = state_manager.get_active_session_id()
+        # History is no longer included here, frontend fetches based on session_id
 
         return jsonify(status_data_serializable)
     except Exception as e:
@@ -122,17 +122,24 @@ def stop_bot_route():
         return jsonify({"success": False, "message": "Erreur interne serveur (arrêt)."}), 500
 
 # --- MODIFIED: /order_history ---
-@api_bp.route('/order_history')
+@api_bp.route('/order_history') # MODIFIED: Takes session_id
 def get_order_history():
-    """Retourne l'historique des ordres depuis la DB, filtré par stratégie si précisé."""
+    """Retourne l'historique des ordres pour une session_id donnée."""
+    session_id_str = request.args.get('session_id')
+    limit = request.args.get('limit', default=100, type=int)
+
+    if not session_id_str:
+        return jsonify({"success": False, "message": "Paramètre 'session_id' manquant."}), 400
+
     try:
-        strategy = request.args.get('strategy') # Optional filter
-        limit = request.args.get('limit', default=100, type=int) # Optional limit
-        # Get history via state_manager which calls db.get_order_history
-        history = state_manager.get_order_history(strategy=strategy, limit=limit)
+        session_id = int(session_id_str)
+        # Call db function directly using the parsed session_id
+        history = db.get_order_history(session_id=session_id, limit=limit)
         return jsonify(history)
+    except ValueError:
+        return jsonify({"success": False, "message": "Paramètre 'session_id' doit être un entier."}), 400
     except Exception as e:
-        logger.error(f"API /order_history: Error: {e}", exc_info=True)
+        logger.error(f"API /order_history?session_id={session_id_str}: Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur interne serveur (historique)."}), 500
 
 # --- /manual_exit, /place_order (Unchanged logic, but state updates broadcast automatically) ---
@@ -244,46 +251,115 @@ def handle_place_order():
         logger.exception("API /place_order: Unexpected error during preparation or sending.")
         return jsonify({"success": False, "message": f"Erreur interne serveur: {e}"}), 500
 
-# --- MODIFIED: /reset ---
-@api_bp.route('/reset', methods=['POST'])
-def reset_bot():
-    """Réinitialise l’historique des ordres dans la DB pour la stratégie sélectionnée."""
-    try:
-        data = request.get_json() or {}
-        # Determine strategy: from request, or current state, or default
-        strategy = data.get('strategy') or state_manager.get_state('strategy') or config_manager.get_value('STRATEGY_TYPE', 'SCALPING')
-
-        # Call DB reset
-        reset_success = db.reset_orders(strategy)
-
-        if reset_success:
-            logger.info(f"API /reset: Historique des ordres réinitialisé dans la DB pour la stratégie {strategy}.")
-            # Broadcast the (now empty) history
-            broadcast_order_history_update()
-            return jsonify({"success": True, "message": f"Historique réinitialisé pour {strategy}."})
-        else:
-            logger.error(f"API /reset: Failed to reset history in DB for strategy {strategy}.")
-            return jsonify({"success": False, "message": f"Erreur lors du reset pour {strategy}."}), 500
-
-    except Exception as e:
-        logger.error(f"API /reset: Error: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Erreur interne lors du reset."}), 500
+# --- DEPRECATED: /reset ---
+# @api_bp.route('/reset', methods=['POST'])
+# def reset_bot():
+#     """DEPRECATED: Use session management endpoints instead."""
+#     logger.warning("API /reset endpoint called (DEPRECATED). Use session management.")
+#     return jsonify({"success": False, "message": "Endpoint /reset est obsolète. Utilisez la gestion de session."}), 410
 
 # --- MODIFIED: /stats ---
-@api_bp.route('/stats')
+@api_bp.route('/stats') # MODIFIED: Takes session_id
 def get_stats():
-    """Retourne les statistiques depuis la DB pour la stratégie sélectionnée."""
+    """Retourne les statistiques pour une session_id donnée."""
+    session_id_str = request.args.get('session_id')
+
+    if not session_id_str:
+        return jsonify({"success": False, "message": "Paramètre 'session_id' manquant."}), 400
+
     try:
-        # Determine strategy: from request arg, or current state, or default
-        strategy = request.args.get('strategy') or state_manager.get_state('strategy') or config_manager.get_value('STRATEGY_TYPE', 'SCALPING')
-
-        # Call db.get_stats directly
-        stats = db.get_stats(strategy)
-
+        session_id = int(session_id_str)
+        # Call db function directly using the parsed session_id
+        stats = db.get_stats(session_id=session_id)
         return jsonify(stats)
+    except ValueError:
+        return jsonify({"success": False, "message": "Paramètre 'session_id' doit être un entier."}), 400
     except Exception as e:
-        logger.error(f"API /stats: Error: {e}", exc_info=True)
+        logger.error(f"API /stats?session_id={session_id_str}: Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur lors du calcul des stats depuis la DB."}), 500
+
+# --- NEW Session Management Endpoints ---
+
+@api_bp.route('/sessions', methods=['GET'])
+def list_sessions_route():
+    """Liste toutes les sessions enregistrées."""
+    try:
+        sessions = db.list_sessions()
+        return jsonify(sessions)
+    except Exception as e:
+        logger.error(f"API /sessions (GET): Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur interne serveur (liste sessions)."}), 500
+
+@api_bp.route('/sessions', methods=['POST'])
+def create_session_route():
+    """Crée une nouvelle session de bot."""
+    logger.info("API /sessions (POST): Request received to create new session.")
+    data = request.get_json() or {}
+    strategy = data.get('strategy') or config_manager.get_value('STRATEGY_TYPE', 'UNKNOWN')
+    name = data.get('name') # Optional name from request
+
+    # Optional: End current active session first?
+    # current_active_session_id = state_manager.get_active_session_id()
+    # if current_active_session_id:
+    #     logger.info(f"API /sessions (POST): Ending previous active session {current_active_session_id}...")
+    #     db.end_session(current_active_session_id, final_status='completed') # Or 'aborted'?
+
+    try:
+        # Get current config as JSON string
+        current_config_dict = config_manager.get_config()
+        config_json = json.dumps(current_config_dict, default=str) # Use default=str for Decimal etc.
+        new_session_id = db.create_new_session(strategy=strategy, config_snapshot_json=config_json, name=name)
+        if new_session_id:
+            state_manager.set_active_session_id(new_session_id) # Set new session as active
+            logger.info(f"API /sessions (POST): New session {new_session_id} created and set active.")
+            # Optionally trigger initial history refresh here?
+            # threading.Thread(target=bot_core.refresh_order_history_via_rest, args=(state_manager.get_state('symbol'), 200), daemon=True).start()
+            # Return the details of the newly created session
+            new_session_details = {"id": new_session_id, "strategy": strategy, "name": name or f"{strategy}_..."} # Simplified return
+            return jsonify({"success": True, "message": "Nouvelle session créée.", "session": new_session_details}), 201
+        else:
+            logger.error("API /sessions (POST): Failed to create session in DB.")
+            return jsonify({"success": False, "message": "Échec de la création de la session en base de données."}), 500
+    except Exception as e:
+        logger.error(f"API /sessions (POST): Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur interne serveur (création session)."}), 500
+
+@api_bp.route('/sessions/<int:session_id>', methods=['DELETE'])
+def delete_session_route(session_id):
+    """Supprime une session et ses ordres associés."""
+    logger.warning(f"API /sessions DELETE: Request received for session ID: {session_id}")
+    try:
+        current_active_id = state_manager.get_active_session_id()
+        delete_success = db.delete_session(session_id)
+        if delete_success:
+            logger.info(f"API /sessions DELETE: Session {session_id} deleted successfully.")
+            if current_active_id == session_id:
+                logger.warning(f"API /sessions DELETE: Deleted the active session ({session_id}). Clearing active session ID.")
+                state_manager.set_active_session_id(None)
+            # Optionally broadcast an update? Maybe just let frontend refresh lists.
+            return jsonify({"success": True, "message": f"Session {session_id} supprimée."})
+        else:
+            logger.error(f"API /sessions DELETE: Failed to delete session {session_id} (not found or DB error).")
+            return jsonify({"success": False, "message": f"Échec de la suppression de la session {session_id} (non trouvée?)."}), 404
+    except Exception as e:
+        logger.error(f"API /sessions DELETE: Error for session {session_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur interne serveur (suppression session)."}), 500
+
+@api_bp.route('/sessions/active', methods=['GET'])
+def get_active_session_route():
+    """Retourne l'ID de la session active actuelle."""
+    try:
+        active_id = state_manager.get_active_session_id()
+        if active_id is not None:
+            # Optionally fetch full details from DB if needed
+            # session_details = db.get_session_details(active_id) # Assumes such a function exists
+            return jsonify({"success": True, "active_session_id": active_id})
+        else:
+            return jsonify({"success": True, "active_session_id": None})
+    except Exception as e:
+        logger.error(f"API /sessions/active (GET): Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur interne serveur (session active)."}), 500
+
 
 # Exporter le Blueprint
 __all__ = ['api_bp']

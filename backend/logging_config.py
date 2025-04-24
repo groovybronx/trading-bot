@@ -79,9 +79,18 @@ def setup_logging(log_queue: queue.Queue):  # Ne prend plus ws_clients_set
         log_queue, websocket_handler_instance, respect_handler_level=True
     )
 
+    # --- Configurer niveaux spécifiques pour certains modules ---
+    # (Optionnel, car le root logger filtre déjà à INFO)
+    # logging.getLogger('db').setLevel(logging.INFO)
+    # logging.getLogger('websocket_handlers').setLevel(logging.INFO)
+    # logging.getLogger('bot_core').setLevel(logging.INFO)
+    # logging.getLogger('manager').setLevel(logging.INFO) # Pour state_manager, config_manager, order_manager
+    # logging.getLogger('binance_client_wrapper').setLevel(logging.INFO)
+    logging.getLogger('werkzeug').setLevel(logging.WARNING) # Réduire verbosité Flask/Werkzeug
+
     # Démarrer le listener
     listener.start()
     logger = logging.getLogger(__name__)
-    logger.info("Logging configuré (Console + WebSocket via Queue).")  # Add logger
+    logger.info("Logging configuré (Root Level: INFO, Console + WebSocket via Queue).")
 
     return listener  # Retourner le listener pour pouvoir l'arrêter proprement

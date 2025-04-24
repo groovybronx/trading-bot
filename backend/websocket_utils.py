@@ -2,7 +2,7 @@
 import logging
 import json
 import asyncio  # Keep asyncio import in case needed elsewhere, though not directly used in sync broadcast
-from typing import Dict, Any, Set, cast # Import cast
+from typing import Dict, Any, Set
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +79,19 @@ def broadcast_state_update():
         # Ajouter des données potentiellement utiles non stockées directement dans l'état principal
         state_serializable["config"] = config_manager.get_config()
         state_serializable["latest_book_ticker"] = state_manager.get_book_ticker()
-        # Get active session ID and fetch history for that session
+        # --- MODIFIÉ: Récupérer l'historique de la session active ---
         active_session_id = state_manager.get_active_session_id()
+        order_history = []
         if active_session_id is not None:
-            # Pass session_id to state_manager.get_order_history
-            # Use cast to assure Pylance that active_session_id is int here
-            state_serializable["order_history"] = state_manager.get_order_history(session_id=cast(int, active_session_id))
+            try:
+                # Utiliser l'ID de session active pour récupérer l'historique
+                order_history = state_manager.get_order_history(session_id=active_session_id)
+            except Exception as e_hist:
+                logger.error(f"Erreur récupération historique session {active_session_id} pour broadcast état: {e_hist}")
         else:
-            state_serializable["order_history"] = [] # Send empty history if no active session
-            logger.debug("broadcast_state_update: No active session, sending empty order history.")
-        state_serializable["active_session_id"] = active_session_id # Also include the active session ID itself
+            logger.warning("Aucun ID de session actif trouvé pour broadcast état (historique vide).")
+        state_serializable["order_history"] = order_history
+        # --- FIN MODIFIÉ ---
 
         logger.debug("Broadcasting full state update...")
         broadcast_message({"type": "status_update", "state": state_serializable})
@@ -102,18 +105,20 @@ def broadcast_order_history_update():
     from manager.state_manager import state_manager
 
     try:
-        # Get history for the currently active session
+        # --- MODIFIÉ: Récupérer l'historique de la session active ---
         active_session_id = state_manager.get_active_session_id()
+        history = []
         if active_session_id is not None:
-             # Pass session_id to state_manager.get_order_history
-             # Use cast to assure Pylance that active_session_id is int here
-            history = state_manager.get_order_history(session_id=cast(int, active_session_id))
-            logger.info(f"Broadcasting order history update for session {active_session_id}...")
-            broadcast_message({"type": "order_history_update", "history": history, "session_id": active_session_id})
+            try:
+                 # Utiliser l'ID de session active pour récupérer l'historique
+                history = state_manager.get_order_history(session_id=active_session_id)
+            except Exception as e_hist:
+                 logger.error(f"Erreur récupération historique session {active_session_id} pour broadcast historique: {e_hist}")
         else:
-            logger.warning("broadcast_order_history_update: No active session ID found. Cannot broadcast history.")
-            # Optionally broadcast an empty history?
-            # broadcast_message({"type": "order_history_update", "history": [], "session_id": None})
+            logger.warning("Aucun ID de session actif trouvé pour broadcast historique (historique vide).")
+        # --- FIN MODIFIÉ ---
+        logger.info("Broadcasting order history update...")
+        broadcast_message({"type": "order_history_update", "history": history})
     except Exception as e:
         logger.error(f"Erreur dans broadcast_order_history_update: {e}", exc_info=True)
 

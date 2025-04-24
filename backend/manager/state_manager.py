@@ -32,7 +32,7 @@ class StateManager:
 
         initial_config = config_manager.get_config()
         self._required_klines = self._calculate_required_klines(initial_config)
-        self._session_id = str(uuid.uuid4())
+        # self._session_id = str(uuid.uuid4()) # REMOVED old UUID session id
 
         # --- Structures de Données ---
         self._kline_history: Deque[List[Any]] = collections.deque(
@@ -70,10 +70,12 @@ class StateManager:
             "keepalive_thread": None,
             "stop_keepalive_requested": False,
             "last_order_timestamp": None,
+            "_active_session_id": None, # NEW: To store the current DB session ID
         }
 
         self._load_persistent_data() # Loads only position state now
-        logger.info("StateManager initialized (History managed by DB).")
+        # Session initialization will happen later, likely in bot_core or app start
+        logger.info("StateManager initialized (History managed by DB, session not yet initialized).")
 
     def _calculate_required_klines(self, config_dict: Dict[str, Any]) -> int:
         """Calcule le nombre de klines nécessaires basé sur la stratégie."""
@@ -166,14 +168,17 @@ class StateManager:
     # REMOVED: replace_order_history
     # REMOVED: add_or_update_order_history
 
-    def get_order_history(self, strategy: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_order_history(self, session_id: int, limit: int = 100) -> List[Dict[str, Any]]: # Added session_id parameter
         """
-        Récupère l'historique des ordres depuis la base de données.
+        Récupère l'historique des ordres depuis la base de données pour une session spécifique.
         """
         # Pas besoin de verrou ici, db.py gère sa propre concurrence.
-        return db.get_order_history(strategy=strategy, limit=limit)
+        # Requires session_id now
+        # Explicitly cast session_id to int, although it's already typed as int.
+        # This is an attempt to satisfy a potentially confused linter.
+        return db.get_order_history(session_id=int(session_id), limit=limit)
 
-    # REMOVED: clear_order_history (Handled by API calling db.reset_orders)
+    # REMOVED: clear_order_history (Use db.delete_session via API)
 
     # --- Gestion Configuration ---
 
@@ -398,7 +403,7 @@ class StateManager:
                 logger.warning("StateManager: Post-load check failed ('in_position' True, 'entry_details' missing). Resetting.")
                 self._bot_state["in_position"] = False
 
-    # --- Session and Timestamp (Unchanged) ---
+    # --- Session and Timestamp ---
     def get_last_order_timestamp(self) -> Optional[int]:
         with self._config_state_lock:
             return self._bot_state.get("last_order_timestamp")
@@ -407,12 +412,24 @@ class StateManager:
         with self._config_state_lock:
             self._bot_state["last_order_timestamp"] = timestamp_ms
 
-    def get_session_id(self):
-        return self._session_id
+    # REMOVED: get_session_id (old UUID)
+    # REMOVED: reset_session_id (old UUID)
 
-    def reset_session_id(self):
-        self._session_id = str(uuid.uuid4())
-        logger.info(f"Nouvelle session_id générée: {self._session_id}")
+    # --- NEW: Active DB Session ID Management ---
+    def get_active_session_id(self) -> Optional[int]:
+        """Gets the ID of the currently active database session."""
+        with self._config_state_lock:
+            return self._bot_state.get("_active_session_id")
+
+    def set_active_session_id(self, session_id: Optional[int]):
+        """Sets the ID of the currently active database session."""
+        with self._config_state_lock:
+            if self._bot_state.get("_active_session_id") != session_id:
+                logger.info(f"StateManager: Setting active session ID to: {session_id}")
+                self._bot_state["_active_session_id"] = session_id
+                # Note: We don't save this to persistent file, it's determined at runtime
+            else:
+                logger.debug(f"StateManager: Active session ID already set to: {session_id}")
 
 
 # --- Instanciation Singleton ---

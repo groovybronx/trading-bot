@@ -107,9 +107,16 @@ def run_keepalive():
         state_manager.update_state({"keepalive_thread": None})
 
 
-# --- MODIFIED: Rafraîchissement Historique Ordres (Updates DB) ---
-def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 100):
-    """Récupère l'historique récent via REST et met à jour la DB."""
+# --- MODIFIED: Rafraîchissement Historique Ordres (Updates DB, filters by session start time) ---
+def refresh_order_history_via_rest(
+    session_start_time_ms: Optional[int], # ADDED: Session start time to filter orders
+    symbol: Optional[str] = None,
+    limit: int = 100
+):
+    """
+    Récupère l'historique récent via REST et met à jour la DB,
+    en ne sauvegardant que les ordres créés pendant ou après le début de la session active.
+    """
     if not symbol:
         symbol = state_manager.get_state("symbol")
     if not symbol:
@@ -129,17 +136,32 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 10
             logger.error("Failed to fetch order history via REST.")
             return
 
-        # Get current strategy and session ID once
+        # Get current strategy and ACTIVE session ID once
         strategy = config_manager.get_value("STRATEGY_TYPE", "UNKNOWN")
-        session_id = state_manager.get_session_id()
+        session_id = state_manager.get_active_session_id() # Use new method
+        if session_id is None:
+            logger.error("refresh_order_history_via_rest: Cannot refresh history, no active session ID found in state.")
+            return
+        if session_start_time_ms is None:
+             logger.error("refresh_order_history_via_rest: Cannot refresh history, session_start_time_ms is missing.")
+             return
 
+        logger.info(f"Filtering REST orders based on session start time: {session_start_time_ms}")
         # Iterate and save each order to DB (INSERT OR REPLACE handles updates/duplicates)
         for order_rest_data in all_orders_data:
             # Format the order data similarly to how execution reports are formatted
             # Note: REST API might use different field names than WebSocket executionReport
             order_id = str(order_rest_data.get("orderId", "N/A"))
-            # Use updateTime if available, otherwise use creation time (time)
-            timestamp = order_rest_data.get("updateTime") or order_rest_data.get("time")
+            order_creation_time_ms = order_rest_data.get("time") # Use 'time' for creation timestamp
+
+            # --- ADDED: Filter by session start time ---
+            if order_creation_time_ms is None or order_creation_time_ms < session_start_time_ms:
+                # logger.debug(f"Skipping order {order_id} (time {order_creation_time_ms}) - before session start {session_start_time_ms}")
+                continue # Skip order if it's older than the session start time
+            # --- END ADDED ---
+
+            # Use updateTime if available for the main timestamp field (last update)
+            timestamp = order_rest_data.get("updateTime") or order_creation_time_ms
 
             # Basic formatting - needs refinement based on actual REST API response structure
             formatted_order = {
@@ -159,7 +181,7 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 10
                 "stopPrice": order_rest_data.get("stopPrice"),
                 "pnl": None,  # PNL/Performance usually not in REST history directly
                 "performance_pct": None,
-                "session_id": session_id,  # Add session ID
+                # "session_id": session_id, # No longer needed here, passed to save_order
                 # Use 'time' for created_at if available
                 "created_at": (
                     datetime.utcfromtimestamp(
@@ -180,7 +202,8 @@ def refresh_order_history_via_rest(symbol: Optional[str] = None, limit: int = 10
                 ),
             }
 
-            if db.save_order(formatted_order):
+            # Pass session_id to save_order
+            if db.save_order(formatted_order, session_id):
                 saved_count += 1
             else:
                 failed_count += 1
@@ -627,13 +650,41 @@ def start_bot_core() -> tuple[bool, str]:
     if not _load_and_prepare_state():
         return False, "Échec chargement état/données initiales."
 
-    # --- ADDED: Initial Order History Sync ---
+    # --- NEW: Initialize or Get Active Session ---
+    logger.info("Start Core: Initializing DB session...")
+    current_strategy = config_manager.get_value("STRATEGY_TYPE", "UNKNOWN")
+    active_session_data = db.get_active_session(strategy=current_strategy)
+    active_session_id = None
+    if active_session_data:
+        active_session_id = active_session_data.get("id")
+        logger.info(f"Start Core: Found existing active session ID: {active_session_id} for strategy {current_strategy}.")
+    else:
+        logger.info(f"Start Core: No active session found for {current_strategy}. Creating new one...")
+        # Get current config as JSON string
+        current_config_dict = config_manager.get_config()
+        config_json = json.dumps(current_config_dict, default=str) # Use default=str for Decimal etc.
+        active_session_id = db.create_new_session(strategy=current_strategy, config_snapshot_json=config_json)
+        if not active_session_id:
+            logger.error("Start Core: Failed to create a new DB session (with config snapshot). Aborting start.")
+            state_manager.update_state({"status": "ERROR"})
+            broadcast_state_update()
+            return False, "Échec création session DB."
+        logger.info(f"Start Core: Created new session ID: {active_session_id}.")
+
+    # Store the active session ID in the state manager
+    state_manager.set_active_session_id(active_session_id)
+    # --- End Session Init ---
+
+
+    # --- Initial Order History Sync (Now uses active session and filters by start time) ---
+    session_start_time = active_session_data.get("start_time") if active_session_data else None
     logger.info(
-        "Start Core: Performing initial order history sync from REST API to DB..."
+        f"Start Core: Performing initial order history sync from REST API to DB for session {active_session_id} (Start Time: {session_start_time})..."
     )
-    refresh_order_history_via_rest(limit=200)  # Fetch more initially
+    # Pass session_start_time to the refresh function
+    refresh_order_history_via_rest(session_start_time_ms=session_start_time, limit=200)
     logger.info("Start Core: Initial order history sync completed.")
-    # --- End Added ---
+    # --- End Modified ---
 
     if not _prefetch_kline_history():
         # Don't fail start if klines fail, just log warning (unless strategy REQUIRES it)
@@ -713,6 +764,19 @@ def stop_bot_core(partial_cleanup: bool = False) -> tuple[bool, str]:
     state_manager.update_state(state_updates_on_stop)
     # Ensure broadcast happens AFTER state is updated
     broadcast_state_update() # Notify frontend of the final stopped state
+
+    # --- NEW: End the active session in DB ---
+    active_session_id = state_manager.get_active_session_id()
+    if active_session_id and not partial_cleanup:
+        logger.info(f"{log_prefix} Ending DB session ID: {active_session_id}...")
+        final_db_status = 'completed' if final_status == 'STOPPED' else 'aborted'
+        if db.end_session(active_session_id, final_status=final_db_status):
+            logger.info(f"{log_prefix} DB session {active_session_id} ended with status '{final_db_status}'.")
+        else:
+            logger.error(f"{log_prefix} Failed to end DB session {active_session_id}.")
+        state_manager.set_active_session_id(None) # Clear active session ID from state
+    # --- End Session End ---
+
 
     # No need to save persistent data here, update_state does it now
 

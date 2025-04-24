@@ -28,6 +28,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveParamsBtn = document.getElementById('save-params-btn');
     const paramSaveStatus = document.getElementById('param-save-status');
 
+    // --- NEW: Session Management DOM Elements ---
+    const sessionSelector = document.getElementById('session-selector');
+    const newSessionBtn = document.getElementById('new-session-btn');
+    const deleteSessionBtn = document.getElementById('delete-session-btn');
+    const sessionStatusIndicator = document.getElementById('session-status-indicator');
+    const historySessionIdSpan = document.getElementById('history-session-id'); // Span in history title
+
     // Parameter Inputs
     const strategySelector = document.getElementById('param-strategy-type');
     const swingParamsDiv = document.getElementById('swing-params');
@@ -80,13 +87,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let ws = null; // WebSocket connection
     let lastKnownState = null; // Variable pour stocker le dernier état reçu
     let orderHistoryTable = null; // Variable pour l'instance DataTables
+    let currentSessionId = null; // Variable pour stocker l'ID de session sélectionné/actif
+    let allSessionsData = []; // Pour stocker les données des sessions
 
     // === INIT FUNCTION ===
-    function init() {
-        // Initialisation de l’UI, listeners, WebSocket, etc.
-    }
-
-    document.addEventListener('DOMContentLoaded', init);
+    // function init() { // No longer needed as logic is directly in DOMContentLoaded
+    //     // Initialisation de l’UI, listeners, WebSocket, etc.
+    // }
+    // document.addEventListener('DOMContentLoaded', init); // Replaced by direct execution
 
     // === UI MANAGEMENT ===
     const UI = {
@@ -96,15 +104,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 return; // Ne pas mettre à jour lastKnownState si l'état est invalide
             }
             lastKnownState = state; // Stocker le dernier état valide reçu
-            if (!state.config) { // Vérifier si config existe après avoir stocké l'état
-                console.warn("State received without config object. Cannot update parameters.");
-                return;
-            }
 
             // Update Bot Status section - vérifier existence éléments
             if (statusValue) statusValue.textContent = state.status || 'Inconnu';
             if (statusValue) statusValue.className = `status-${(state.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`;
-            if (strategyTypeValueSpan) strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
+            if (strategyTypeValueSpan && state.config) strategyTypeValueSpan.textContent = state.config?.STRATEGY_TYPE || 'N/A';
             if (symbolValue) symbolValue.textContent = state.symbol || 'N/A';
             if (timeframeValue) timeframeValue.textContent = state.timeframe || 'N/A';
             if (quoteAssetLabel) quoteAssetLabel.textContent = state.quote_asset || 'USDT';
@@ -130,21 +134,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (startBotBtn) startBotBtn.disabled = state.status === 'RUNNING' || state.status === 'STARTING' || state.status === 'STOPPING';
             if (stopBotBtn) stopBotBtn.disabled = state.status !== 'RUNNING';
 
-            // Update Parameter Inputs
-            const currentStrategy = state.config.STRATEGY_TYPE || 'SWING';
-            if (strategySelector) {
-                strategySelector.value = currentStrategy;
-                UI.updateParameterVisibility(currentStrategy); // Gère la visibilité
+            // Update Parameter Inputs only if config is present
+            if (state.config) {
+                const currentStrategy = state.config.STRATEGY_TYPE || 'SWING';
+                if (strategySelector) {
+                    strategySelector.value = currentStrategy;
+                    UI.updateParameterVisibility(currentStrategy); // Gère la visibilité
+                }
+                // Appeler la fonction pour remplir les paramètres
+                UI.fillParameters(state.config, currentStrategy);
+            } else {
+                 console.warn("State received without config object. Cannot update parameters.");
             }
-            // Appeler la fonction pour remplir les paramètres
-            UI.fillParameters(state.config, currentStrategy);
 
-            // Update Order History (if included in state)
-             if (state.order_history) {
-                 UI.updateOrderHistory(state.order_history);
-             }
              // Update Price Display
              UI.updatePriceDisplay(state.latest_book_ticker);
+
+             // Update active session indicator if session ID changes in state
+             if (state.active_session_id !== undefined && state.active_session_id !== currentSessionId) {
+                 console.log("Active session ID changed via status update, refreshing sessions list.");
+                 fetchAndDisplaySessions(); // Refresh list and selection
+             }
         },
 
         // Fonction pour remplir les champs de paramètres
@@ -400,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statLosses = document.getElementById('stat-losses');
     const statTotal = document.getElementById('stat-total');
     const statAvgPnl = document.getElementById('stat-avg-pnl');
-    const resetBotBtn = document.getElementById('reset-bot-btn');
+    const resetBotBtn = document.getElementById('reset-bot-btn'); // Now hidden
 
     // --- Helper Functions ---
 
@@ -446,7 +456,8 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onopen = () => {
             console.log('WebSocket connection established');
             UI.appendLog("WebSocket connecté.", "info");
-            fetchBotState();
+            fetchBotState(); // Fetch initial state on connect
+            fetchAndDisplaySessions(); // Fetch sessions on connect
         };
 
         ws.onmessage = (event) => {
@@ -480,7 +491,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         UI.updatePriceDisplay(data.ticker);
                         break;
                     case 'order_history_update':
-                        fetchAndDisplayOrderHistory();
+                        // Refresh history for the CURRENTLY selected session
+                        fetchAndDisplayOrderHistory(currentSessionId);
                         UI.appendLog("Historique des ordres mis à jour (via push dédié).", "info");
                         break;
                     case 'ping':
@@ -544,8 +556,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorMsg);
             }
             const state = await response.json();
-            UI.updateUI(state);
+            UI.updateUI(state); // This updates the main state display
             UI.appendLog("État initial récupéré.", "info");
+            // Note: Session data is fetched separately by fetchAndDisplaySessions
         } catch (error) {
             console.error('Error fetching bot state:', error);
             UI.appendLog(`Erreur récupération état initial: ${error.message}`, 'error');
@@ -561,16 +574,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if(startBotBtn) startBotBtn.disabled = true;
         if(stopBotBtn) stopBotBtn.disabled = true;
         try {
+            // Starting the bot might implicitly create a new session if none is active
+            // We should refresh the session list after starting
             const response = await fetch(`${API_BASE_URL}/api/start`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) {
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             UI.appendLog(result.message || 'Commande Démarrer envoyée.', 'info');
+            // Refresh sessions after start attempt to reflect potential new active session
+            await fetchAndDisplaySessions();
         } catch (error) {
             console.error('Error starting bot:', error);
             UI.appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
-            if(startBotBtn) startBotBtn.disabled = false;
+            if(startBotBtn) startBotBtn.disabled = false; // Re-enable on error
+            if(stopBotBtn) stopBotBtn.disabled = (state_manager.get_state("status") !== 'RUNNING'); // Re-enable stop if running
         }
     }
 
@@ -579,16 +597,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if(stopBotBtn) stopBotBtn.disabled = true;
         if(startBotBtn) startBotBtn.disabled = true;
         try {
+            // Stopping the bot should end the current session
             const response = await fetch(`${API_BASE_URL}/api/stop`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) {
                 throw new Error(result.message || `Erreur serveur: ${response.status}`);
             }
             UI.appendLog(result.message || 'Commande Arrêter envoyée.', 'info');
+             // Refresh sessions after stop attempt to reflect ended session status
+             await fetchAndDisplaySessions();
         } catch (error) {
             console.error('Error stopping bot:', error);
             UI.appendLog(`Erreur à l'arrêt du bot: ${error.message}`, 'error');
-             if(stopBotBtn) stopBotBtn.disabled = false;
+             if(stopBotBtn) stopBotBtn.disabled = (state_manager.get_state("status") !== 'RUNNING'); // Re-enable if still running
+             if(startBotBtn) startBotBtn.disabled = false; // Re-enable start
         }
     }
 
@@ -642,6 +664,19 @@ document.addEventListener('DOMContentLoaded', () => {
             VOLUME_MA_PERIOD: safeValue(paramVolMa, v => parseInt(v, 10)),
         };
 
+        // Convert percentages back to fractions for backend
+        const fractions = ['RISK_PER_TRADE', 'CAPITAL_ALLOCATION', 'STOP_LOSS_PERCENTAGE', 'TAKE_PROFIT_1_PERCENTAGE', 'TAKE_PROFIT_2_PERCENTAGE', 'TRAILING_STOP_PERCENTAGE'];
+        fractions.forEach(key => {
+            if (paramsToSend[key] !== null && paramsToSend[key] !== undefined) {
+                try {
+                    paramsToSend[key] = parseFloat(paramsToSend[key]) / 100.0;
+                } catch {
+                    paramsToSend[key] = null; // Set to null if conversion fails
+                }
+            }
+        });
+
+
         const cleanedParamsToSend = Object.fromEntries(
             Object.entries(paramsToSend).filter(([_, v]) => v !== null && v !== undefined && !(typeof v === 'number' && isNaN(v)))
         );
@@ -689,88 +724,247 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Fonction pour récupérer et afficher les stats ---
-    async function fetchAndDisplayStats() {
-        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/stats?strategy=${strategy}`);
-            if (!response.ok) throw new Error('Erreur API stats');
-            const stats = await response.json();
-            if (statRoi) statRoi.textContent = (stats.roi !== undefined) ? formatNumber(stats.roi, 4) : 'N/A';
-            if (statWinrate) statWinrate.textContent = (stats.winrate !== undefined) ? `${formatNumber(stats.winrate, 2)}%` : 'N/A';
-            if (statWins) statWins.textContent = stats.wins ?? 'N/A';
-            if (statLosses) statLosses.textContent = stats.losses ?? 'N/A';
-            if (statTotal) statTotal.textContent = stats.total_trades ?? 'N/A';
-            if (statAvgPnl) statAvgPnl.textContent = (stats.avg_pnl !== undefined) ? formatNumber(stats.avg_pnl, 4) : 'N/A';
-        } catch (e) {
+    // --- Fonction pour récupérer et afficher les stats (MODIFIED: takes session_id) ---
+    async function fetchAndDisplayStats(sessionId) {
+        if (sessionId === null || sessionId === undefined) {
+            console.warn("fetchAndDisplayStats: No session ID provided.");
+            // Clear stats display if no session selected
             if (statRoi) statRoi.textContent = 'N/A';
             if (statWinrate) statWinrate.textContent = 'N/A';
             if (statWins) statWins.textContent = 'N/A';
             if (statLosses) statLosses.textContent = 'N/A';
             if (statTotal) statTotal.textContent = 'N/A';
             if (statAvgPnl) statAvgPnl.textContent = 'N/A';
+            return;
+        }
+        console.debug(`Fetching stats for session ID: ${sessionId}`);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/stats?session_id=${sessionId}`);
+            if (!response.ok) throw new Error(`Erreur API stats (${response.status})`);
+            const stats = await response.json();
+            console.debug("Stats received:", stats);
+            // Utiliser les valeurs retournées par l'API (qui sont déjà formatées en %)
+            if (statRoi) statRoi.textContent = (stats.roi !== undefined && stats.roi !== null) ? `${formatNumber(stats.roi, 2)}%` : 'N/A';
+            if (statWinrate) statWinrate.textContent = (stats.winrate !== undefined && stats.winrate !== null) ? `${formatNumber(stats.winrate, 2)}%` : 'N/A';
+            if (statWins) statWins.textContent = stats.wins ?? 'N/A';
+            if (statLosses) statLosses.textContent = stats.losses ?? 'N/A';
+            if (statTotal) statTotal.textContent = stats.total_trades ?? 'N/A';
+            if (statAvgPnl) statAvgPnl.textContent = (stats.avg_pnl !== undefined && stats.avg_pnl !== null) ? `${formatNumber(stats.avg_pnl, 2)}%` : 'N/A';
+        } catch (e) {
+            console.error(`Error fetching stats for session ${sessionId}:`, e);
+            if (statRoi) statRoi.textContent = 'Erreur';
+            if (statWinrate) statWinrate.textContent = 'Erreur';
+            if (statWins) statWins.textContent = 'Erreur';
+            if (statLosses) statLosses.textContent = 'Erreur';
+            if (statTotal) statTotal.textContent = 'Erreur';
+            if (statAvgPnl) statAvgPnl.textContent = 'Erreur';
         }
     }
 
-    // --- Fonction pour récupérer et afficher l'historique filtré par stratégie ---
-    async function fetchAndDisplayOrderHistory() {
-        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
+    // --- Fonction pour récupérer et afficher l'historique (MODIFIED: takes session_id) ---
+    async function fetchAndDisplayOrderHistory(sessionId) {
+        if (sessionId === null || sessionId === undefined) {
+            console.warn("fetchAndDisplayOrderHistory: No session ID provided.");
+            if (orderHistoryTable) {
+                orderHistoryTable.clear().draw(); // Clear the table
+            }
+             if (historySessionIdSpan) historySessionIdSpan.textContent = 'N/A';
+            return;
+        }
+        console.debug(`Fetching order history for session ID: ${sessionId}`);
+         if (historySessionIdSpan) historySessionIdSpan.textContent = `#${sessionId}`;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/order_history?strategy=${strategy}`);
-            if (!response.ok) throw new Error('Erreur API historique');
+            const response = await fetch(`${API_BASE_URL}/api/order_history?session_id=${sessionId}`);
+            if (!response.ok) throw new Error(`Erreur API historique (${response.status})`);
             const history = await response.json();
-            UI.updateOrderHistory(history);
-        } catch {}
+            console.debug("Order history received:", history);
+            UI.updateOrderHistory(history); // updateOrderHistory uses DataTables API now
+        } catch (e) {
+            console.error(`Error fetching order history for session ${sessionId}:`, e);
+            if (orderHistoryTable) {
+                 orderHistoryTable.clear().draw(); // Clear on error too
+                 // Optionally display error in table? DataTables handles emptyTable message.
+            }
+        }
     }
 
-    // --- Fonction pour reset le bot ---
-    async function resetBot() {
-        let strategy = strategySelector ? strategySelector.value : 'SCALPING';
-        if (resetBotBtn) resetBotBtn.disabled = true;
+    // --- NEW Session Management Functions ---
+
+    async function fetchAndDisplaySessions() {
+        console.debug("Fetching sessions...");
+        let activeId = null;
         try {
-            const response = await fetch(`${API_BASE_URL}/api/reset`, {
+            // Fetch active session first
+            const activeResponse = await fetch(`${API_BASE_URL}/api/sessions/active`);
+            if (activeResponse.ok) {
+                const activeData = await activeResponse.json();
+                activeId = activeData.active_session_id; // Can be null
+                console.debug("Active session ID:", activeId);
+            } else {
+                console.warn("Could not fetch active session:", activeResponse.status);
+            }
+
+            // Fetch all sessions
+            const listResponse = await fetch(`${API_BASE_URL}/api/sessions`);
+            if (!listResponse.ok) throw new Error(`Erreur API sessions (${listResponse.status})`);
+            allSessionsData = await listResponse.json(); // Store globally
+            console.debug("All sessions data:", allSessionsData);
+
+            // Populate selector
+            if (sessionSelector) {
+                const previouslySelectedValue = sessionSelector.value; // Remember selection before clearing
+                sessionSelector.innerHTML = '<option value="">-- Sélectionner --</option>'; // Default option
+                let activeIdFoundInList = false;
+                allSessionsData.forEach(session => {
+                    const option = document.createElement('option');
+                    option.value = session.id;
+                    // Format timestamp for display
+                    const startTime = session.start_time ? new Date(session.start_time).toLocaleString() : 'N/A';
+                    const endTime = session.end_time ? ` - ${new Date(session.end_time).toLocaleString()}` : (session.status === 'active' ? ' - Active' : '');
+                    const sessionName = session.name || `Session ${session.id}`;
+                    option.textContent = `${sessionName} (${session.strategy} / ${startTime}${endTime})`;
+                    if (session.id === activeId) {
+                        option.selected = true; // Select the active one
+                        activeIdFoundInList = true;
+                    } else if (String(session.id) === previouslySelectedValue && !activeIdFoundInList) {
+                         // Re-select previous if active wasn't found (e.g., after delete)
+                         option.selected = true;
+                    }
+                    sessionSelector.appendChild(option);
+                });
+                 // Trigger change event manually if needed to load data for the selected item
+                 if (sessionSelector.value) {
+                     handleSessionChange(); // Load data for the initially selected session
+                 } else {
+                     updateSessionDisplay(null); // Clear display if nothing is selected
+                 }
+            } else {
+                 updateSessionDisplay(null); // Clear display if selector doesn't exist
+            }
+
+        } catch (e) {
+            console.error("Error fetching/displaying sessions:", e);
+            if (sessionSelector) sessionSelector.innerHTML = '<option value="">Erreur chargement</option>';
+            updateSessionDisplay(null); // Clear display on error
+        }
+    }
+
+    function updateSessionDisplay(sessionId) {
+         currentSessionId = sessionId; // Update global tracker
+         console.debug("Updating display for session ID:", currentSessionId);
+         fetchAndDisplayOrderHistory(currentSessionId);
+         fetchAndDisplayStats(currentSessionId);
+
+         // Update status indicator and delete button state
+         const selectedSession = allSessionsData.find(s => s.id === currentSessionId);
+         if (sessionStatusIndicator) {
+             sessionStatusIndicator.textContent = selectedSession ? `(${selectedSession.status})` : '';
+             sessionStatusIndicator.className = selectedSession ? `status-${selectedSession.status}` : '';
+         }
+         if (deleteSessionBtn) {
+             // Enable delete only if a session is selected AND it's not currently active
+             const isActive = selectedSession && selectedSession.status === 'active';
+             deleteSessionBtn.disabled = (currentSessionId === null || currentSessionId === undefined || isActive);
+             if(isActive) {
+                 deleteSessionBtn.title = "Impossible de supprimer une session active.";
+             } else {
+                  deleteSessionBtn.title = "";
+             }
+         }
+    }
+
+    async function handleSessionChange() {
+        const selectedIdStr = sessionSelector ? sessionSelector.value : null;
+        const selectedId = selectedIdStr ? parseInt(selectedIdStr, 10) : null;
+
+        if (selectedId !== null && !isNaN(selectedId)) {
+            updateSessionDisplay(selectedId);
+        } else {
+            updateSessionDisplay(null); // Handle "-- Sélectionner --" case
+        }
+    }
+
+    async function createNewSession() {
+        console.log("Attempting to create new session...");
+        if (newSessionBtn) newSessionBtn.disabled = true;
+        try {
+            // Get current strategy from the selector in the UI
+            const currentStrategy = strategySelector ? strategySelector.value : 'UNKNOWN';
+            const response = await fetch(`${API_BASE_URL}/api/sessions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ strategy })
+                body: JSON.stringify({ strategy: currentStrategy }) // Send current strategy
             });
             const result = await response.json();
-            if (!response.ok) throw new Error(result.message || 'Erreur reset');
-            UI.appendLog(result.message || 'Bot réinitialisé.', 'info');
-            fetchBotState();
-            fetchAndDisplayStats();
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || `Erreur API (${response.status})`);
+            }
+            UI.appendLog(result.message || "Nouvelle session créée.", "info");
+            await fetchAndDisplaySessions(); // Refresh list and select the new active one
         } catch (e) {
-            UI.appendLog(`Erreur reset: ${e.message}`, 'error');
+            console.error("Error creating new session:", e);
+            UI.appendLog(`Erreur création session: ${e.message}`, 'error');
         } finally {
-            if (resetBotBtn) resetBotBtn.disabled = false;
+            if (newSessionBtn) newSessionBtn.disabled = false;
         }
     }
 
-    // --- Listener bouton reset ---
-    if (resetBotBtn) resetBotBtn.addEventListener('click', resetBot);
+    async function deleteSelectedSession() {
+        const sessionIdToDelete = currentSessionId;
+        if (sessionIdToDelete === null || sessionIdToDelete === undefined) {
+            alert("Veuillez sélectionner une session à supprimer.");
+            return;
+        }
 
-    // --- Rafraîchir stats au chargement et au changement de stratégie ---
-    document.addEventListener('DOMContentLoaded', fetchAndDisplayStats);
-    if (strategySelector) {
-        strategySelector.addEventListener('change', fetchAndDisplayStats);
+        const selectedSession = allSessionsData.find(s => s.id === sessionIdToDelete);
+        if (selectedSession && selectedSession.status === 'active') {
+             alert("Impossible de supprimer une session active. Arrêtez le bot d'abord si cette session est liée au bot en cours.");
+             return;
+        }
+
+
+        if (!confirm(`Êtes-vous sûr de vouloir supprimer la session #${sessionIdToDelete} et TOUS ses ordres associés ? Cette action est irréversible.`)) {
+            return;
+        }
+
+        console.log(`Attempting to delete session ID: ${sessionIdToDelete}`);
+        if (deleteSessionBtn) deleteSessionBtn.disabled = true; // Disable while deleting
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionIdToDelete}`, {
+                method: 'DELETE'
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || `Erreur API (${response.status})`);
+            }
+            UI.appendLog(result.message || `Session ${sessionIdToDelete} supprimée.`, "info");
+            await fetchAndDisplaySessions(); // Refresh list, will select active or none
+        } catch (e) {
+            console.error(`Error deleting session ${sessionIdToDelete}:`, e);
+            UI.appendLog(`Erreur suppression session ${sessionIdToDelete}: ${e.message}`, 'error');
+            // Re-enable button based on new selection state after refresh
+             fetchAndDisplaySessions(); // Refresh to potentially re-enable button correctly
+        }
     }
 
-    // --- Rafraîchir l'historique au chargement et au changement de stratégie ---
-    document.addEventListener('DOMContentLoaded', fetchAndDisplayOrderHistory);
-    if (strategySelector) {
-        strategySelector.addEventListener('change', fetchAndDisplayOrderHistory);
-    }
 
     // --- Event Listeners ---
     if (startBotBtn) startBotBtn.addEventListener('click', startBot);
     if (stopBotBtn) stopBotBtn.addEventListener('click', stopBot);
     if (saveParamsBtn) saveParamsBtn.addEventListener('click', saveParameters);
 
+    // --- NEW Session Event Listeners ---
+    if (sessionSelector) sessionSelector.addEventListener('change', handleSessionChange);
+    if (newSessionBtn) newSessionBtn.addEventListener('click', createNewSession);
+    if (deleteSessionBtn) deleteSessionBtn.addEventListener('click', deleteSelectedSession);
+
     // Mettre à jour la visibilité des paramètres quand la stratégie change
     if (strategySelector) {
         strategySelector.addEventListener('change', (event) => {
             UI.updateParameterVisibility(event.target.value);
             // *** CORRECTION: Appeler fillParameters ici aussi ***
-            if (lastKnownState) {
+            if (lastKnownState && lastKnownState.config) { // Check if config exists
                 UI.fillParameters(lastKnownState.config, event.target.value);
             }
         });
@@ -781,32 +975,34 @@ document.addEventListener('DOMContentLoaded', () => {
     // Mettre à jour la visibilité initiale basée sur la valeur par défaut du sélecteur
     if (strategySelector) {
         UI.updateParameterVisibility(strategySelector.value);
-        // *** CORRECTION: Appeler fillParameters ici aussi au chargement initial ***
-        // (Attendre que fetchBotState ait rempli lastKnownState)
-        // Note: fetchBotState appelle déjà UI.updateUI qui appelle fillParameters
+        // Note: fillParameters is called within updateUI after fetchBotState completes
     }
-    // Établir la connexion WebSocket
-    connectWebSocket();
 
     // Initialiser DataTables
     try {
-        orderHistoryTable = $('#order-history table').DataTable({
+        orderHistoryTable = $('#order-history-table').DataTable({ // Use the new table ID
             paging: false, // Désactiver la pagination pour l'instant
             searching: false, // Désactiver la recherche pour l'instant
             info: false, // Masquer les informations "Showing X of Y entries"
             order: [[0, 'desc']], // Trier par la première colonne (Date/Heure) en descendant par défaut
             language: { // Traduction simple
-                emptyTable: "Aucun ordre dans l'historique de cette session.",
+                emptyTable: "Aucun ordre dans l'historique pour cette session.", // Modified message
                 zeroRecords: "Aucun enregistrement correspondant trouvé"
-            }
-            // Note: Le redimensionnement des colonnes n'est pas une fonctionnalité native simple de DataTables.
-            // Il faudrait un plugin supplémentaire (comme ColReorderWithResize ou similaire) ou du code custom.
-            // Concentrons-nous d'abord sur le tri.
+            },
+             // Add column definitions if specific formatting/rendering is needed per column by DataTables
+             // columns: [ null, null, null, null, null, null, null, null, null, null, { "className": "dt-body-right" }, null ] // Example: right-align performance
         });
         console.log("DataTables initialized successfully.");
     } catch (e) {
         console.error("Error initializing DataTables:", e);
         UI.appendLog("Erreur initialisation table historique.", "error");
     }
+
+    // Établir la connexion WebSocket (fetches state and sessions on open)
+    connectWebSocket();
+
+    // Initial fetch of sessions (also done on WS open, but good for fallback)
+    fetchAndDisplaySessions();
+
 
 }); // End DOMContentLoaded
