@@ -39,25 +39,88 @@ h2 {
     margin-bottom: 1rem;
 }
 
-#bot-status p, #controls p {
-    margin: 0.5rem 0;
+/* --- Conteneur pour Statut et Stats --- */
+.top-sections-container {
+    display: flex;
+    flex-wrap: wrap; /* Permet le retour à la ligne sur petits écrans */
+    gap: 1.5rem; /* Espace entre les sections */
+    margin-bottom: 1.5rem; /* Marge sous le conteneur */
+    font-size: smaller;
 }
 
-#bot-status span, #controls span {
+.top-sections-container > section {
+    flex: 1; /* Chaque section prend une part égale de l'espace */
+    min-width: 300px; /* Largeur minimale avant retour à la ligne */
+    margin-bottom: 0; /* Annule la marge inférieure des sections directes */
+}
+
+/* --- Section Statut du Bot --- */
+#bot-status {
+    /* display: grid; */ /* Remplacé par flex dans le conteneur */
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Grid responsive */
+    gap: 0.3rem 1rem; /* Espace vertical et horizontal */
+}
+
+#bot-status p {
+    font-weight: bold;
+    /*margin: 0.2rem 0; /* Réduire la marge verticale */
+    /*display: flex; /* Utiliser flex pour aligner label et valeur */
+    justify-content: space-between; /* Espace entre label et valeur */
+    border-bottom: 1px dashed #eee; /* Séparateur léger */
+    padding-bottom: 0.2rem;
+}
+
+#bot-status p span { /* Style pour la valeur */
+    font-weight: normal;
+    text-align: left; /* Aligner la valeur à droite */
+   /* margin-left: 10px; /* Espace entre label et valeur */
+}
+
+/* Classes pour les statuts (utilisées par JS) */
+.status-running { color: green; font-weight: bold; }
+.status-stopped { color: red; }
+.status-starting, .status-stopping { color: orange; }
+.status-error, .status-unknown { color: #cc0000; font-weight: bold; }
+
+
+/* --- Section Logs --- */
+#log-output {
+    background-color: #282c34; /* Fond sombre */
+    color: #abb2bf; /* Texte clair */
+    border: 1px solid #444;
+    padding: 15px;
+    height: 250px; /* Augmenter légèrement la hauteur */
+    overflow-y: scroll;
+    white-space: pre-wrap;
+    font-family: 'Courier New', Courier, monospace; /* Police monospace classique */
+    font-size: 0.9em;
+    border-radius: 4px;
+}
+
+/* Styles par niveau de log (classes ajoutées par JS) */
+.log-entry {
+    padding: 2px 5px;
+    margin-bottom: 2px;
+    border-radius: 3px;
+    display: block; /* Assure que chaque log est sur sa ligne */
+}
+.log-info {
+    /* background-color: #d1ecf1; */ /* Bleu clair */
+    /* color: #0c5460; */
+    /* Pas de style spécifique pour info sur fond sombre */
+}
+.log-warn {
+    background-color: #4e442a; /* Fond jaune sombre */
+    color: #fff3cd; /* Texte jaune clair */
+}
+.log-error {
+    background-color: #5a3232; /* Fond rouge sombre */
+    color: #f8d7da; /* Texte rouge clair */
     font-weight: bold;
 }
 
-#log-output {
-    background-color: #e9e9e9;
-    border: 1px solid #ccc;
-    padding: 10px;
-    height: 200px;
-    overflow-y: scroll;
-    white-space: pre-wrap; /* Pour retourner à la ligne */
-    font-family: monospace;
-    font-size: 0.9em;
-}
 
+/* --- Boutons --- */
 button {
     background-color: #5cb85c;
     color: white;
@@ -72,17 +135,29 @@ button {
 button:disabled {
     background-color: #ccc;
     cursor: not-allowed;
+    opacity: 0.7;
 }
 
 #stop-bot-btn {
     background-color: #d9534f;
+}
+#stop-bot-btn:hover:not(:disabled) {
+    background-color: #c9302c;
 }
 
 #stop-bot-btn:disabled {
     background-color: #ccc;
 }
 
+#reset-bot-btn {
+    background-color: #f0ad4e; /* Orange */
+}
+#reset-bot-btn:hover:not(:disabled) {
+    background-color: #ec971f;
+}
 
+
+/* --- Footer --- */
 footer {
     text-align: center;
     margin-top: 2rem;
@@ -175,13 +250,13 @@ footer {
 #order-history table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.9em;
+    font-size: 0.5em; /* Réduction de la taille de la police */
 }
 
 #order-history th,
 #order-history td {
     border: 1px solid #ddd;
-    padding: 8px 10px;
+    padding: 6px 8px; /* Réduction du padding */
     text-align: left;
     white-space: nowrap; /* Empêcher le retour à la ligne */
 }
@@ -208,7 +283,32 @@ footer {
     padding: 20px;
 }
 
-/* Styles pour la performance */
+/* --- Section Statistiques --- */
+#stats ul {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); /* Grid responsive */
+    gap: 10px;
+}
+
+#stats li {
+    background-color: #f9f9f9;
+    padding: 10px 15px;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#stats li span {
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+
+/* --- Styles pour la performance (Historique) --- */
 .perf-positive {
     color: green;
     font-weight: bold;

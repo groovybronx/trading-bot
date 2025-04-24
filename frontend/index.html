@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Bot Dashboard</title>
     <link rel="stylesheet" href="style.css">
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
 </head>
 
 <body>
@@ -14,9 +16,10 @@
     </header>
 
     <main>
-        <section id="bot-status">
-            <h2>Statut du Bot</h2>
-            <p>État : <span id="status-value">Inconnu</span></p>
+        <div class="top-sections-container"> <!-- Nouveau conteneur -->
+            <section id="bot-status">
+                <h2>Statut du Bot</h2>
+                <p>État : <span id="status-value">Inconnu</span></p>
             <p>Stratégie : <span id="strategy-type-value">N/A</span></p>
             <p>Symbole : <span id="symbol-value">N/A</span></p>
             <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour
@@ -30,6 +33,19 @@
             <p>Position Actuelle : <span id="position-value">Aucune</span></p>
 
         </section>
+
+        <section id="stats"> <!-- Section Statistiques déplacée ici -->
+            <h2>Statistiques</h2>
+            <ul>
+                <li>ROI : <span id="stat-roi">N/A</span></li>
+                <li>Winrate : <span id="stat-winrate">N/A</span></li>
+                <li>Ordres gagnants : <span id="stat-wins">N/A</span></li>
+                <li>Ordres perdants : <span id="stat-losses">N/A</span></li>
+                <li>Nombre total d'ordres : <span id="stat-total">N/A</span></li>
+                <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
+            </ul>
+        </section>
+        </div> <!-- Fin du nouveau conteneur (top-sections-container) -->
 
         <div id="signals-output" style="max-height:7.5em; overflow-y:auto; margin-bottom:15px;"></div>
 
@@ -74,7 +90,7 @@
                 <li>Nombre total d'ordres : <span id="stat-total">N/A</span></li>
                 <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
             </ul>
-        </section>
+        </section> --> <!-- Section Statistiques déplacée plus haut -->
 
         <section id="logs">
             <h2>Logs</h2>
@@ -306,6 +322,11 @@
         <p>&copy; 2025 Votre Bot de Trading</p>
     </footer>
 
+    <!-- jQuery (requis par DataTables) -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <!-- DataTables JS -->
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <!-- Notre script -->
     <script src="script.js"></script>
 </body>
 

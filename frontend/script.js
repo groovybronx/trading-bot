@@ -3,8 +3,10 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // --- Configuration ---
-    const API_BASE_URL = `http://${window.location.hostname}:5000`;
-    const WS_URL = `ws://${window.location.hostname}:5000/ws_logs`;
+    // Utiliser 'localhost' si hostname est vide (cas file:///)
+    const hostname = window.location.hostname || 'localhost';
+    const API_BASE_URL = `http://${hostname}:5000`;
+    const WS_URL = `ws://${hostname}:5000/ws_logs`;
 
     // --- DOM Element References ---
     const statusValue = document.getElementById('status-value');
@@ -77,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let ws = null; // WebSocket connection
     let lastKnownState = null; // Variable pour stocker le dernier état reçu
+    let orderHistoryTable = null; // Variable pour l'instance DataTables
 
     // === INIT FUNCTION ===
     function init() {
@@ -205,94 +208,81 @@ document.addEventListener('DOMContentLoaded', () => {
         },
 
         updateOrderHistory: function(history) {
-            if (!orderHistoryBody) {
-                console.error("Order history table body not found!");
+            // Utiliser l'instance DataTables si elle est initialisée
+            if (!orderHistoryTable) {
+                console.error("DataTables instance for order history not found!");
+                // Fallback vers l'ancienne méthode si DataTables n'est pas prêt (peu probable mais par sécurité)
+                if (!orderHistoryBody) return;
+                orderHistoryBody.innerHTML = '<tr><td colspan="12">Erreur: Table non initialisée.</td></tr>';
                 return;
             }
-            orderHistoryBody.innerHTML = ''; // Vider le contenu actuel
 
-            if (!Array.isArray(history) || history.length === 0) {
-                if (orderHistoryPlaceholder && 'content' in orderHistoryPlaceholder) {
-                     try {
-                        const placeholderClone = orderHistoryPlaceholder.content.cloneNode(true);
-                        orderHistoryBody.appendChild(placeholderClone);
-                    } catch (e) {
-                         console.error("Error using order history placeholder template:", e);
-                         const row = orderHistoryBody.insertRow();
-                         const cell = row.insertCell();
-                         cell.colSpan = 12;
-                         cell.textContent = "Aucun ordre dans l'historique.";
-                         cell.style.textAlign = 'center';
+            // Préparer les données pour DataTables (array d'arrays)
+            const dataSet = (!Array.isArray(history) || history.length === 0) ? [] : history.map(order => {
+                // --- Logique de formatage existante ---
+                 const performancePctValue = order.performance_pct;
+                 let performancePctText = '-';
+                 let perfClass = '';
+                 if (performancePctValue !== null && performancePctValue !== undefined) {
+                     if (typeof performancePctValue === 'string' && performancePctValue.includes('%')) {
+                         performancePctText = performancePctValue;
+                         const numericPerf = parseFloat(performancePctValue.replace('%', ''));
+                         if (!isNaN(numericPerf)) {
+                             perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
+                         }
+                     } else {
+                         const numericPerf = parseFloat(performancePctValue);
+                         if (!isNaN(numericPerf)) {
+                             performancePctText = `${formatNumber(numericPerf * 100, 2)}%`;
+                             perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
+                         }
                      }
-                } else {
-                     const row = orderHistoryBody.insertRow();
-                     const cell = row.insertCell();
-                     cell.colSpan = 12;
-                     cell.textContent = "Aucun ordre dans l'historique.";
-                     cell.style.textAlign = 'center';
-                }
-                return;
-            }
+                 }
+                 // Ajouter les classes directement dans le HTML pour DataTables
+                 const performanceCell = `<span class="${perfClass}">${performancePctText}</span>`;
 
-            history.sort((a, b) => (parseInt(b.timestamp || 0)) - (parseInt(a.timestamp || 0)));
+                 let avgPrice = order.price;
+                 const executedQtyNum = parseFloat(order.executedQty || 0);
+                 const cummQuoteQtyNum = parseFloat(order.cummulativeQuoteQty || 0);
 
-            history.forEach(order => {
-                const row = document.createElement('tr');
+                 if ((!avgPrice || parseFloat(avgPrice) === 0) && cummQuoteQtyNum > 0 && executedQtyNum > 0) {
+                     avgPrice = cummQuoteQtyNum / executedQtyNum;
+                 }
 
-                const performancePctValue = order.performance_pct;
-                let performancePctText = '-';
-                let perfClass = '';
-                if (performancePctValue !== null && performancePctValue !== undefined) {
-                    if (typeof performancePctValue === 'string' && performancePctValue.includes('%')) {
-                        performancePctText = performancePctValue;
-                        const numericPerf = parseFloat(performancePctValue.replace('%', ''));
-                        if (!isNaN(numericPerf)) {
-                            perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
-                        }
-                    } else {
-                        const numericPerf = parseFloat(performancePctValue);
-                        if (!isNaN(numericPerf)) {
-                            performancePctText = `${formatNumber(numericPerf * 100, 2)}%`;
-                            perfClass = numericPerf >= 0 ? 'perf-positive' : 'perf-negative';
-                        }
-                    }
-                }
+                 const priceOrValueText = formatNumber(avgPrice, 4);
 
-                let avgPrice = order.price;
-                const executedQtyNum = parseFloat(order.executedQty || 0);
-                const cummQuoteQtyNum = parseFloat(order.cummulativeQuoteQty || 0);
+                 let quoteValue = '-';
+                 if (!isNaN(cummQuoteQtyNum) && cummQuoteQtyNum > 0) {
+                     quoteValue = formatNumber(cummQuoteQtyNum, 2);
+                 } else if (!isNaN(executedQtyNum) && !isNaN(avgPrice)) {
+                     quoteValue = formatNumber(executedQtyNum * avgPrice, 2);
+                 }
 
-                if ((!avgPrice || parseFloat(avgPrice) === 0) && cummQuoteQtyNum > 0 && executedQtyNum > 0) {
-                    avgPrice = cummQuoteQtyNum / executedQtyNum;
-                }
+                 const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
+                 const sideCell = `<span class="${sideClass}">${order.side || 'N/A'}</span>`;
+                 // --- Fin logique formatage ---
 
-                const priceOrValueText = formatNumber(avgPrice, 4);
-
-                let quoteValue = '-';
-                if (!isNaN(cummQuoteQtyNum) && cummQuoteQtyNum > 0) {
-                    quoteValue = formatNumber(cummQuoteQtyNum, 2);
-                } else if (!isNaN(executedQtyNum) && !isNaN(avgPrice)) {
-                    quoteValue = formatNumber(executedQtyNum * avgPrice, 2);
-                }
-
-                const sideClass = order.side === 'BUY' ? 'side-buy' : (order.side === 'SELL' ? 'side-sell' : '');
-
-                row.innerHTML = `
-                    <td>${formatTimestamp(order.timestamp)}</td>
-                    <td>${order.symbol || 'N/A'}</td>
-                    <td>${order.strategy || '-'}</td>
-                    <td class="${sideClass}">${order.side || 'N/A'}</td>
-                    <td>${order.type || 'N/A'}</td>
-                    <td>${formatNumber(order.origQty, 8)}</td>
-                    <td>${formatNumber(order.executedQty, 8)}</td>
-                    <td>${priceOrValueText}</td>
-                    <td>${quoteValue}</td>
-                    <td>${order.status || 'N/A'}</td>
-                    <td class="${perfClass}">${performancePctText}</td>
-                    <td>${order.orderId || 'N/A'}</td>
-                `;
-                orderHistoryBody.appendChild(row);
+                 // Retourner un tableau pour la ligne DataTables
+                 return [
+                     formatTimestamp(order.timestamp), // Colonne 0: Date/Heure
+                     order.symbol || 'N/A',            // Colonne 1: Symbole
+                     order.strategy || '-',            // Colonne 2: Stratégie
+                     sideCell,                         // Colonne 3: Side (avec classe)
+                     order.type || 'N/A',              // Colonne 4: Type
+                     formatNumber(order.origQty, 8),   // Colonne 5: Qté Demandée
+                     formatNumber(order.executedQty, 8),// Colonne 6: Qté Exécutée
+                     priceOrValueText,                 // Colonne 7: Prix / Valeur
+                     quoteValue,                       // Colonne 8: Valeur (quote)
+                     order.status || 'N/A',            // Colonne 9: Statut
+                     performanceCell,                  // Colonne 10: Performance (avec classe)
+                     order.orderId || 'N/A'            // Colonne 11: ID Ordre
+                 ];
             });
+
+            // Mettre à jour DataTables
+            orderHistoryTable.clear(); // Vider le tableau
+            orderHistoryTable.rows.add(dataSet); // Ajouter les nouvelles données
+            orderHistoryTable.draw(); // Redessiner le tableau
         },
         updateParameterVisibility: function(selectedStrategy) {
             // Cacher toutes les sections spécifiques par défaut
@@ -797,5 +787,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     // Établir la connexion WebSocket
     connectWebSocket();
+
+    // Initialiser DataTables
+    try {
+        orderHistoryTable = $('#order-history table').DataTable({
+            paging: false, // Désactiver la pagination pour l'instant
+            searching: false, // Désactiver la recherche pour l'instant
+            info: false, // Masquer les informations "Showing X of Y entries"
+            order: [[0, 'desc']], // Trier par la première colonne (Date/Heure) en descendant par défaut
+            language: { // Traduction simple
+                emptyTable: "Aucun ordre dans l'historique de cette session.",
+                zeroRecords: "Aucun enregistrement correspondant trouvé"
+            }
+            // Note: Le redimensionnement des colonnes n'est pas une fonctionnalité native simple de DataTables.
+            // Il faudrait un plugin supplémentaire (comme ColReorderWithResize ou similaire) ou du code custom.
+            // Concentrons-nous d'abord sur le tri.
+        });
+        console.log("DataTables initialized successfully.");
+    } catch (e) {
+        console.error("Error initializing DataTables:", e);
+        UI.appendLog("Erreur initialisation table historique.", "error");
+    }
 
 }); // End DOMContentLoaded

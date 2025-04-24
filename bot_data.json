@@ -1,17 +1,6 @@
 {
     "state": {
-        "in_position": true,
-        "entry_details": {
-            "order_id": 6672685,
-            "avg_price": "93651.50890804356052642643905",
-            "quantity": "0.23783000",
-            "timestamp": 1745451648670,
-            "side": "BUY",
-            "highest_price": "93651.50890804356052642643905",
-            "lowest_price": "93651.50890804356052642643905",
-            "sl_price": null,
-            "tp1_price": null,
-            "tp2_price": null
-        }
+        "in_position": false,
+        "entry_details": null
     }
 }
