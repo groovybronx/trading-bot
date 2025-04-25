@@ -365,3 +365,26 @@ td.side-sell {
 .signals-table th {
     background: #fff3bf;
 }
+
+/* Import monitoring styles */
+@import url('./styles/monitoring.css');
+
+/* Additional monitoring section styles */
+.monitoring-section {
+    margin: 20px 0;
+    padding: 20px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.monitoring-section h2 {
+    margin-bottom: 20px;
+    color: var(--text-primary);
+}
+
+/* Ensure monitoring grid is responsive */
+@media (max-width: 768px) {
+    .monitoring-grid {
+        grid-template-columns: 1fr;
+    }
+}

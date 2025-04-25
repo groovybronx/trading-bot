@@ -2,7 +2,7 @@
 import logging
 import json
 import asyncio  # Keep asyncio import in case needed elsewhere, though not directly used in sync broadcast
-from typing import Dict, Any, Set, cast # Import cast
+from typing import Dict, Any, Set, cast  # Import cast
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +23,17 @@ def broadcast_message(message_dict: dict):
 
         for ws in clients_to_send:
             try:
-                # Assuming ws.send is thread-safe or handled correctly by the WS library (e.g., Flask-Sock, gevent-websocket)
+                # Vérifier si l'objet WebSocket possède l'attribut 'closed'
+                if hasattr(ws, "closed") and ws.closed:
+                    disconnected_clients.add(ws)
+                    continue
+
+                # Envoyer le message
                 ws.send(message_json)
             except Exception as e:
                 # Log specific error and mark client for removal
-                # Getting remote address might fail if connection is already broken
                 remote_addr = "?"
                 try:
-                    # Accessing environ might depend on the specific WebSocket library implementation
                     remote_addr = (
                         ws.environ.get("REMOTE_ADDR", "?")
                         if hasattr(ws, "environ")
@@ -84,11 +87,19 @@ def broadcast_state_update():
         if active_session_id is not None:
             # Pass session_id to state_manager.get_order_history
             # Use cast to assure Pylance that active_session_id is int here
-            state_serializable["order_history"] = state_manager.get_order_history(session_id=cast(int, active_session_id))
+            state_serializable["order_history"] = state_manager.get_order_history(
+                session_id=cast(int, active_session_id)
+            )
         else:
-            state_serializable["order_history"] = [] # Send empty history if no active session
-            logger.debug("broadcast_state_update: No active session, sending empty order history.")
-        state_serializable["active_session_id"] = active_session_id # Also include the active session ID itself
+            state_serializable["order_history"] = (
+                []
+            )  # Send empty history if no active session
+            logger.debug(
+                "broadcast_state_update: No active session, sending empty order history."
+            )
+        state_serializable["active_session_id"] = (
+            active_session_id  # Also include the active session ID itself
+        )
 
         logger.debug("Broadcasting full state update...")
         broadcast_message({"type": "status_update", "state": state_serializable})
@@ -105,13 +116,25 @@ def broadcast_order_history_update():
         # Get history for the currently active session
         active_session_id = state_manager.get_active_session_id()
         if active_session_id is not None:
-             # Pass session_id to state_manager.get_order_history
-             # Use cast to assure Pylance that active_session_id is int here
-            history = state_manager.get_order_history(session_id=cast(int, active_session_id))
-            logger.info(f"Broadcasting order history update for session {active_session_id}...")
-            broadcast_message({"type": "order_history_update", "history": history, "session_id": active_session_id})
+            # Pass session_id to state_manager.get_order_history
+            # Use cast to assure Pylance that active_session_id is int here
+            history = state_manager.get_order_history(
+                session_id=cast(int, active_session_id)
+            )
+            logger.info(
+                f"Broadcasting order history update for session {active_session_id}..."
+            )
+            broadcast_message(
+                {
+                    "type": "order_history_update",
+                    "history": history,
+                    "session_id": active_session_id,
+                }
+            )
         else:
-            logger.warning("broadcast_order_history_update: No active session ID found. Cannot broadcast history.")
+            logger.warning(
+                "broadcast_order_history_update: No active session ID found. Cannot broadcast history."
+            )
             # Optionally broadcast an empty history?
             # broadcast_message({"type": "order_history_update", "history": [], "session_id": None})
     except Exception as e:
@@ -122,15 +145,21 @@ def broadcast_stats_update(session_id: int):
     """Récupère les stats pour une session et les diffuse."""
     # Import local
     import db
+
     try:
         if session_id is not None:
             stats = db.get_stats(session_id=session_id)
             logger.info(f"Broadcasting stats update for session {session_id}...")
-            broadcast_message({"type": "stats_update", "stats": stats, "session_id": session_id})
+            broadcast_message(
+                {"type": "stats_update", "stats": stats, "session_id": session_id}
+            )
         else:
             logger.warning("broadcast_stats_update: No session ID provided.")
     except Exception as e:
-        logger.error(f"Erreur dans broadcast_stats_update for session {session_id}: {e}", exc_info=True)
+        logger.error(
+            f"Erreur dans broadcast_stats_update for session {session_id}: {e}",
+            exc_info=True,
+        )
 
 
 # --- AJOUT DE LA FONCTION MANQUANTE ---
@@ -154,7 +183,11 @@ def broadcast_ticker_update(ticker_data: Dict[str, Any]):
 
 
 def broadcast_signal_event(
-    signal_type: str, direction: str, valid: bool, reason: str, extra: dict[str, Any] | None = None
+    signal_type: str,
+    direction: str,
+    valid: bool,
+    reason: str,
+    extra: dict[str, Any] | None = None,
 ):
     """Diffuse un événement de signal (entrée/sortie, validé ou non) aux clients WebSocket."""
     event = {
@@ -178,6 +211,6 @@ __all__ = [
     "broadcast_order_history_update",
     "broadcast_ticker_update",
     "broadcast_signal_event",
-    "broadcast_stats_update", # Export de la nouvelle fonction
+    "broadcast_stats_update",  # Export de la nouvelle fonction
 ]
 # --- FIN MODIFIÉ ---

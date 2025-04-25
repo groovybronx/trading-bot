@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 import logging
 
+from regex import F
+
 # Charger les variables d'environnement au début
 load_dotenv()
 # Remplacer les prints par des logs pour une meilleure gestion en production
@@ -41,7 +43,7 @@ STRATEGY_TYPE = "SCALPING"  # Valeur par défaut, sera gérée par ConfigManager
 RISK_PER_TRADE = (
     1.0  # Risque par trade en POURCENTAGE du capital alloué (ex: 1.0 pour 1%)
 )
-CAPITAL_ALLOCATION = 50.0  # POURCENTAGE du capital total à allouer (ex: 50.0 pour 50%)
+CAPITAL_ALLOCATION = 20.0  # POURCENTAGE du capital total à allouer (ex: 50.0 pour 50%)
 STOP_LOSS_PERCENTAGE = 0.5  # POURCENTAGE de perte max par trade (ex: 0.5 pour 0.5%)
 TAKE_PROFIT_1_PERCENTAGE = 1.0  # POURCENTAGE de gain pour TP1 (ex: 1.0 pour 1%)
 TAKE_PROFIT_2_PERCENTAGE = 1.5  # POURCENTAGE de gain pour TP2 (ex: 1.5 pour 1.5%)
@@ -50,7 +52,7 @@ TIME_STOP_MINUTES = 15  # Durée maximale (minutes) d'une position avant sortie 
 ORDER_COOLDOWN_MS = 2000  # Délai minimal (ms) entre deux ordres (anti-spam/scalping)
 
 # --- Paramètres Scalping (Stratégie 1: Basée sur Order Book) ---
-SCALPING_ORDER_TYPE = "MARKET"  # 'MARKET' ou 'LIMIT'
+SCALPING_ORDER_TYPE = "LIMIT"  # 'MARKET' ou 'LIMIT'
 SCALPING_LIMIT_TIF = "GTC"  # Time in Force pour ordres LIMIT ('GTC', 'IOC', 'FOK')
 SCALPING_LIMIT_ORDER_TIMEOUT_MS = (
     5000  # Temps (ms) avant d'annuler un ordre LIMIT non rempli
@@ -80,10 +82,10 @@ EMA_SHORT_PERIOD = 9
 EMA_LONG_PERIOD = 21
 EMA_FILTER_PERIOD = 50
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 75
-RSI_OVERSOLD = 25
+RSI_OVERBOUGHT = 95
+RSI_OVERSOLD = 5
 VOLUME_AVG_PERIOD = 20
-USE_EMA_FILTER = True
+USE_EMA_FILTER = False  # Utiliser EMA comme filtre (True/False)
 USE_VOLUME_CONFIRMATION = False
 # Note: SL/TP/Trailing/TimeStop sont partagés via les paramètres communs
 
