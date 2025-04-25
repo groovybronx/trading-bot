@@ -16,9 +16,11 @@ import bot_core
 # Wrapper Client Binance
 import binance_client_wrapper
 
-# Utilitaires WebSocket et Handlers
+# Utilitaires WebSocket
 from utils.websocket_utils import broadcast_state_update, broadcast_order_history_update # Import history update
-import websocket_handlers
+
+# Handlers spécifiques
+from order_execution_handlers import execute_exit, _execute_order_thread # Import moved functions
 
 from utils.order_utils import format_quantity, format_price, get_min_notional, check_min_notional
 
@@ -48,6 +50,19 @@ def get_status():
     except Exception as e:
         logger.error(f"API /status: Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Erreur interne serveur (état)."}), 500
+
+# --- Monitoring Metrics Endpoint ---
+@api_bp.route('/metrics')
+def get_metrics():
+    """Retourne toutes les métriques de monitoring."""
+    try:
+        # Import localement pour éviter les dépendances circulaires au chargement
+        from manager.monitoring_manager import monitoring_manager
+        metrics = monitoring_manager.get_all_metrics()
+        return jsonify(metrics)
+    except Exception as e:
+        logger.error(f"API /metrics: Error: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Erreur interne serveur (métriques)."}), 500
 
 # --- /parameters GET/POST (Unchanged) ---
 @api_bp.route('/parameters', methods=['GET'])
@@ -152,7 +167,7 @@ def manual_exit_route():
              return jsonify({"success": False, "message": "Le bot n'est pas en position."}), 400
 
         logger.warning("API /manual_exit: Triggering manual exit via API...")
-        threading.Thread(target=websocket_handlers.execute_exit, args=("Sortie Manuelle API",), daemon=True).start()
+        threading.Thread(target=execute_exit, args=("Sortie Manuelle API",), daemon=True).start()
         return jsonify({"success": True, "message": "Requête de sortie manuelle initiée."}), 202 # Accepted
     except Exception as e:
         logger.error(f"API /manual_exit: Unexpected error: {e}", exc_info=True)
@@ -238,7 +253,7 @@ def handle_place_order():
                   raise ValueError(f"quoteOrderQty ({order_params['quoteOrderQty']}) is less than MIN_NOTIONAL ({min_notional}).")
 
         logger.info(f"API /place_order: Placing validated order via wrapper: {order_params}")
-        threading.Thread(target=websocket_handlers._execute_order_thread,
+        threading.Thread(target=_execute_order_thread,
                          args=(order_params.copy(), "MANUAL_API"),
                          daemon=True).start()
 

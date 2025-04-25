@@ -64,6 +64,9 @@ SCALPING_SPREAD_THRESHOLD = (
 )
 SCALPING_IMBALANCE_THRESHOLD = 1.5  # Ratio Bid/Ask minimum pour entrer
 
+# --- STRATEGIES DE SORTIE SCALPING ---
+SCALPING_EXIT_STRATEGIES = "ImbalanceExit" # Liste des stratégies de sortie à activer (ex: "ImbalanceExit")
+
 # --- Paramètres Scalping 2 (Stratégie 2: Basée sur Indicateurs Techniques) ---
 # Périodes indicateurs
 SUPERTREND_ATR_PERIOD = 3
@@ -73,9 +76,12 @@ STOCH_K_PERIOD = 14
 STOCH_D_PERIOD = 3
 STOCH_SMOOTH = 3
 BB_PERIOD = 20
-BB_STD = 2.0
+BB_STD = 0.2
 VOLUME_MA_PERIOD = 20
 # Note: SL/TP/Trailing/TimeStop sont partagés via les paramètres communs
+
+# --- STRATEGIES DE SORTIE SCALPING2 ---
+SCALPING2_EXIT_STRATEGIES = "" # Liste des stratégies de sortie à activer (ex: "ImbalanceExit")
 
 # --- Paramètres SWING (Stratégie 3: EMA/RSI/Volume) ---
 EMA_SHORT_PERIOD = 9
@@ -88,6 +94,9 @@ VOLUME_AVG_PERIOD = 20
 USE_EMA_FILTER = False  # Utiliser EMA comme filtre (True/False)
 USE_VOLUME_CONFIRMATION = False
 # Note: SL/TP/Trailing/TimeStop sont partagés via les paramètres communs
+
+# --- STRATEGIES DE SORTIE SWING ---
+SWING_EXIT_STRATEGIES = "" # Liste des stratégies de sortie à activer (ex: "ImbalanceExit")
 
 # --- Vérification Clés API ---
 # Message de log plus clair

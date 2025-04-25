@@ -1,4 +1,4 @@
-# /Users/davidmichels/Desktop/trading-bot/backend/config_manager.py
+# /Users/davidmichels/Desktop/trading-bot/backend/manager/config_manager.py
 import logging
 import os
 import dotenv
@@ -54,19 +54,15 @@ class ConfigManager:
 
         # 2. Valider et convertir immédiatement ces valeurs initiales
         validated_initial_config_internal, error_msg, _ = (
-            self._validate_and_convert_input_config(
-                initial_config_input, is_initial=True
-            )
+            self._validate_and_convert_initial_config(initial_config_input)
         )
 
         if error_msg:
             logger.critical(
                 f"ERREUR CRITIQUE CONFIG INITIALE: {error_msg}. Vérifiez config.py et .env."
             )
-            # CORRECTION: Lever l'erreur ici pour arrêter l'initialisation
             raise ValueError(f"Erreur configuration initiale: {error_msg}")
         else:
-            # 3. Stocker la configuration validée et convertie (format interne)
             self._config: Dict[str, Any] = validated_initial_config_internal
             logger.info(
                 "Configuration initiale validée et convertie au format interne."
@@ -212,14 +208,11 @@ class ConfigManager:
                     "BB_PERIOD",
                     "VOLUME_MA_PERIOD",
                     "ORDER_COOLDOWN_MS",
-                ]:  # Ajout ORDER_COOLDOWN_MS
-                    converted_params[key] = int(value)  # Convertir en entier
-                elif key in [
-                    "SUPERTREND_ATR_MULTIPLIER",
-                    "BB_STD",
-                    "SCALPING_IMBALANCE_THRESHOLD",
-                ]:  # Ex: Float
-                    converted_params[key] = float(value)
+                    "SCALPING_EXIT_STRATEGIES",
+                    "SCALPING2_EXIT_STRATEGIES",
+                    "SWING_EXIT_STRATEGIES",
+                ]:  # Ajout ORDER_COOLDOWN_MS et stratégies de sortie
+                    converted_params[key] = value
                 elif key in [
                     "USE_TESTNET",
                     "USE_EMA_FILTER",
@@ -411,6 +404,21 @@ class ConfigManager:
                         "SCALPING_IMBALANCE_THRESHOLD doit être un nombre > 0."
                     )
 
+                # --- Validation des stratégies de sortie ---
+                exit_strategies = str(
+                    config_to_validate.get("SCALPING_EXIT_STRATEGIES", "")
+                ).strip()
+                if exit_strategies:
+                    valid_exit_strategies = [
+                        "ImbalanceExit"
+                    ]  # Add other strategies later
+                    for strategy in exit_strategies.split(","):
+                        strategy = strategy.strip()
+                        if strategy not in valid_exit_strategies:
+                            errors.append(
+                                f"SCALPING_EXIT_STRATEGIES: Stratégie de sortie invalide: '{strategy}'. Options: {valid_exit_strategies}"
+                            )
+
             # --- Scalping 2 Params ---
             elif new_strategy == "SCALPING2":
                 # Périodes indicateurs
@@ -466,6 +474,21 @@ class ConfigManager:
                 ):
                     errors.append("VOLUME_MA_PERIOD > 0")
 
+                # --- Validation des stratégies de sortie ---
+                exit_strategies = str(
+                    config_to_validate.get("SCALPING2_EXIT_STRATEGIES", "")
+                ).strip()
+                if exit_strategies:
+                    valid_exit_strategies = [
+                        "ImbalanceExit"
+                    ]  # Add other strategies later
+                    for strategy in exit_strategies.split(","):
+                        strategy = strategy.strip()
+                        if strategy not in valid_exit_strategies:
+                            errors.append(
+                                f"SCALPING2_EXIT_STRATEGIES: Stratégie de sortie invalide: '{strategy}'. Options: {valid_exit_strategies}"
+                            )
+
             # --- Swing Params ---
             elif new_strategy == "SWING":
                 # Récupérer les valeurs
@@ -503,13 +526,23 @@ class ConfigManager:
                 ):
                     errors.append("RSI_OVERSOLD doit être < RSI_OVERBOUGHT")
 
-                # Valider les booléens
-                if not isinstance(config_to_validate.get("USE_EMA_FILTER"), bool):
-                    errors.append("USE_EMA_FILTER doit être booléen")
-                if not isinstance(
-                    config_to_validate.get("USE_VOLUME_CONFIRMATION"), bool
-                ):
-                    errors.append("USE_VOLUME_CONFIRMATION doit être booléen")
+            # --- Validation des stratégies de sortie (si présentes) ---
+            for strategy_type in ["SCALPING", "SCALPING2", "SWING"]:
+                exit_strategies_key = f"{strategy_type}_EXIT_STRATEGIES"
+                if exit_strategies_key in config_to_validate:
+                    exit_strategies = str(
+                        config_to_validate.get(exit_strategies_key, "")
+                    ).strip()
+                    if exit_strategies:
+                        valid_exit_strategies = [
+                            "ImbalanceExit"
+                        ]  # Add other strategies later
+                        for strategy in exit_strategies.split(","):
+                            strategy = strategy.strip()
+                            if strategy not in valid_exit_strategies:
+                                errors.append(
+                                    f"{exit_strategies_key}: Stratégie de sortie invalide: '{strategy}'. Options: {valid_exit_strategies}"
+                                )
 
             # --- Vérification clés non modifiables (SEULEMENT si ce n'est pas l'initialisation) ---
             # CORRECTION: Ajouter la condition 'if previous_config:'
@@ -550,70 +583,22 @@ class ConfigManager:
             # Si la validation est OK, retourner la recommandation de redémarrage calculée
             return True, None, restart_recommended
 
-    def _validate_and_convert_input_config(
-        self, params_input: Dict[str, Any], is_initial: bool = False
+    def _validate_and_convert_initial_config(
+        self, config_input: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], Optional[str], bool]:
         """
-        Valide les paramètres fournis (format input, ex: %) et les convertit au format interne.
-        Utilisé principalement pour l'initialisation.
-        Retourne (validatedConfigInternal, errorMessage, restartRecommended).
+        Validates and converts the initial configuration input.
         """
         try:
-            # 1. Charger les défauts et fusionner avec les paramètres d'entrée
-            full_input_params = self._load_initial_config()  # Charge les défauts
-            full_input_params.update(params_input)  # Fusionne avec les params fournis
-
-            # 2. Convertir la configuration complète au format interne
-            internal_config_candidate = self._convert_input_params_to_internal(
-                full_input_params
-            )
-
-            # 3. Ajouter les clés manquantes qui n'ont pas été converties (ex: clés API, Symbol, UseTestnet)
-            #    Ces clés sont gérées spécialement ou n'ont pas de conversion directe.
-            for key in [
-                "BINANCE_API_KEY",
-                "BINANCE_API_SECRET",
-                "SYMBOL",
-                "USE_TESTNET",
-            ]:
-                if key not in internal_config_candidate and key in full_input_params:
-                    internal_config_candidate[key] = full_input_params.get(key)
-
-            # 4. Valider la configuration complète au format interne
-            # Pour la validation initiale, previous_config est vide ou non pertinent pour restart_recommended
-            # CORRECTION: Passer {} comme previous_config si c'est l'initialisation
-            previous_conf_for_validation = {} if is_initial else self._config
+            converted_config = self._convert_input_params_to_internal(config_input)
             is_valid, error_message, restart_recommended = (
-                self._validate_internal_config(
-                    internal_config_candidate, previous_conf_for_validation
-                )
+                self._validate_internal_config(converted_config, {})
             )
-
             if not is_valid:
                 return {}, error_message, False
-            else:
-                # Retourner la configuration complète validée et convertie
-                # CORRECTION: restart_recommended doit être False pour l'initialisation
-                return (
-                    internal_config_candidate,
-                    None,
-                    restart_recommended if not is_initial else False,
-                )
-
-        except (ValueError, TypeError, InvalidOperation) as e:
-            error_message = (
-                f"Paramètres {'initiaux' if is_initial else 'fournis'} invalides: {e}"
-            )
-            logger.error(
-                f"Validation/Conversion Config: {error_message}", exc_info=True
-            )
-            return {}, error_message, False
+            return converted_config, None, restart_recommended
         except Exception as e:
-            error_message = f"Erreur interne validation/conversion config: {e}"
-            logger.error(
-                f"Validation/Conversion Config: {error_message}", exc_info=True
-            )
-            return {}, error_message, False
+            return {}, str(e), False
 
 
 # --- Instanciation ---

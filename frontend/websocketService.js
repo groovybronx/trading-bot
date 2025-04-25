@@ -117,6 +117,11 @@ export function connectWebSocket() {
              // Still try to fetch sessions even if state fetch fails
              SessionManager.fetchAndDisplaySessions();
         });
+
+        // Start metrics polling on successful connection
+        UI.startMetricsPolling();
+        console.log("Metrics polling started via WS onopen.");
+
     };
 
     ws.onmessage = handleWebSocketMessage; // Use the dedicated handler function
@@ -134,6 +139,10 @@ export function connectWebSocket() {
         if (DOM.startBotBtn) DOM.startBotBtn.disabled = false; // Allow attempting to start
         // ws instance might be unusable, nullify it after error?
         // The 'onclose' event usually follows 'onerror', so cleanup might happen there.
+
+        // Stop metrics polling on error
+        UI.stopMetricsPolling();
+        console.log("Metrics polling stopped via WS onerror.");
     };
 
     ws.onclose = (event) => {
@@ -148,6 +157,10 @@ export function connectWebSocket() {
         }
         if (DOM.stopBotBtn) DOM.stopBotBtn.disabled = true;
         if (DOM.startBotBtn) DOM.startBotBtn.disabled = false; // Allow attempting to start
+
+        // Stop metrics polling on close
+        UI.stopMetricsPolling();
+        console.log("Metrics polling stopped via WS onclose.");
 
         // Attempt to reconnect only if the closure was unexpected
         // Codes 1000 (Normal Closure) and 1001 (Going Away) are considered expected.

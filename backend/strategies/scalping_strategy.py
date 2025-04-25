@@ -1,10 +1,13 @@
 import logging
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional, Dict, Any, List
-import pandas as pd # Still needed for type hints in base class
+import pandas as pd  # Still needed for type hints in base class
 
 # Import the base class
 from .base_strategy import BaseStrategy
+
+# Import exit strategies
+from exit_strategies import *
 
 # Import utilities
 from utils.order_utils import (
@@ -16,6 +19,7 @@ from utils.order_utils import (
 
 logger = logging.getLogger(__name__)
 
+
 class ScalpingStrategy(BaseStrategy):
     """
     Scalping strategy based on order book imbalance and spread.
@@ -25,7 +29,19 @@ class ScalpingStrategy(BaseStrategy):
     def __init__(self):
         """Initializes the Scalping Strategy."""
         super().__init__(strategy_name="SCALPING")
-        logger.info("ScalpingStrategy initialized.")
+        self.exit_strategies = self._load_exit_strategies()
+        logger.info(f"ScalpingStrategy initialized with exit strategies: {[s.strategy_name for s in self.exit_strategies]}")
+
+    def _load_exit_strategies(self) -> List[BaseExitStrategy]:
+        """Loads and initializes the exit strategies based on configuration."""
+        exit_strategy_names = [s.strip() for s in str(self.config.get("SCALPING_EXIT_STRATEGIES", "")).split(",") if s.strip()]
+        exit_strategies = []
+        for name in exit_strategy_names:
+            if name == "ImbalanceExit":
+                exit_strategies.append(ImbalanceExit())
+            else:
+                logger.warning(f"ScalpingStrategy: Unknown exit strategy '{name}'. Ignoring.")
+        return exit_strategies
 
     def calculate_indicators(self, klines_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -39,7 +55,7 @@ class ScalpingStrategy(BaseStrategy):
             The original DataFrame.
         """
         logger.debug("SCALPING: calculate_indicators called, but not used by this strategy.")
-        return klines_df # No indicators calculated from klines
+        return klines_df  # No indicators calculated from klines
 
     def check_entry_signal(self, latest_data: pd.Series, **kwargs) -> Optional[Dict[str, Any]]:
         """
@@ -180,7 +196,7 @@ class ScalpingStrategy(BaseStrategy):
                 logger.error(f"SCALPING Entry: Error calculating/preparing order: {e}", exc_info=True)
                 return None
 
-        return None # No signal
+        return None  # No signal
 
     def check_exit_signal(self, latest_data: pd.Series, position_data: Dict[str, Any], **kwargs) -> Optional[str]:
         """
@@ -205,10 +221,10 @@ class ScalpingStrategy(BaseStrategy):
         # --- 1. Check SL/TP ---
         try:
             entry_price = Decimal(str(position_data.get("avg_price", "0")))
-            if entry_price <= 0: return None # Invalid entry price
+            if entry_price <= 0: return None  # Invalid entry price
 
-            current_price = Decimal(book_ticker.get("b", "0")) # Use BID for selling (closing LONG)
-            if current_price <= 0: return None # Invalid current price
+            current_price = Decimal(book_ticker.get("b", "0"))  # Use BID for selling (closing LONG)
+            if current_price <= 0: return None  # Invalid current price
 
             # SL Check
             sl_pct = self.config.get("STOP_LOSS_PERCENTAGE", Decimal("0.005"))
@@ -231,7 +247,7 @@ class ScalpingStrategy(BaseStrategy):
         # --- 2. Check Imbalance Reversal ---
         if not depth or not depth.get("bids") or not depth.get("asks"):
              # logger.debug("SCALPING Exit Check: Missing depth data for imbalance check.")
-             return None # Cannot check imbalance without depth
+             return None  # Cannot check imbalance without depth
 
         try:
             levels = self.config.get("SCALPING_DEPTH_LEVELS", 5)
@@ -253,7 +269,28 @@ class ScalpingStrategy(BaseStrategy):
         except (IndexError, TypeError, KeyError, ZeroDivisionError, InvalidOperation) as e:
             logger.error(f"SCALPING Exit Check: Error calculating imbalance exit: {e}", exc_info=True)
 
-        return None # No exit signal
+        # --- 3. Check Exit Strategies ---
+        for strategy in self.exit_strategies:
+            try:
+                exit_reason = strategy.check_exit_signal(latest_data, position_data, book_ticker=book_ticker, depth=depth)
+                if exit_reason:
+                    logger.info(f"Scalping Exit triggered by {strategy.strategy_name}: {exit_reason}")
+                    return exit_reason
+            except Exception as e:
+                logger.error(f"Error during exit strategy {strategy.strategy_name}: {e}", exc_info=True)
+
+        # --- 3. Check Exit Strategies ---
+        for strategy in self.exit_strategies:
+            try:
+                exit_reason = strategy.check_exit_signal(latest_data, position_data, book_ticker=book_ticker, depth=depth)
+                if exit_reason:
+                    logger.info(f"Scalping Exit triggered by {strategy.strategy_name}: {exit_reason}")
+                    return exit_reason
+            except Exception as e:
+                logger.error(f"Error during exit strategy {strategy.strategy_name}: {e}", exc_info=True)
+
+        return None  # No exit signal
+
 
 # Remove old standalone functions if they existed
 # (The provided file content already didn't have them as top-level functions,

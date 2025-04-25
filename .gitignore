@@ -1,16 +1,43 @@
 # Environment files
 .env
 
-# Node modules
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Node modules (si applicable)
 node_modules/
 
-# Python bytecode
+# Python bytecode and cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# VSCode settings
+# Distribution / Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Test / Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE / Editor settings
 .vscode/
+.idea/
 
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# Project specific ignores (from your original file)
 /backend/config.py
-
 bot_data.json
+bot_orders.json
+

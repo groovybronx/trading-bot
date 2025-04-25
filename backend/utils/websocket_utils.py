@@ -41,9 +41,9 @@ def broadcast_message(message_dict: dict):
                     )
                 except:
                     pass  # Ignore errors getting address
-                logger.warning(
-                    f"Erreur envoi WS broadcast vers {remote_addr}: {e}. Client marqué pour suppression."
-                )
+                # logger.warning(
+                #     f"Erreur envoi WS broadcast vers {remote_addr}: {e}. Client marqué pour suppression."
+                # )
                 disconnected_clients.add(ws)
 
         # Remove disconnected clients outside the loop

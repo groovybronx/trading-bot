@@ -57,7 +57,7 @@ export async function startBot() {
         UI.appendLog(`Erreur au démarrage du bot: ${error.message}`, 'error');
         // Re-enable buttons based on actual state fetched after error? Or just enable start?
         if (DOM.startBotBtn) DOM.startBotBtn.disabled = false;
-        // Stop button state depends on whether the bot is actually running, fetch state to know for sure.
+        // Stop button state depends on whether the bot is actually running.
         throw error;
     }
     // Note: Refreshing sessions should be handled by the caller (e.g., sessionManager)
@@ -334,5 +334,32 @@ export async function deleteSessionApi(sessionId) {
         console.error(`Error deleting session ${sessionId} via API:`, e);
         UI.appendLog(`Erreur suppression session API ${sessionId}: ${e.message}`, 'error');
         throw e;
+    }
+}
+
+/**
+ * Fetches all monitoring metrics from the API.
+ * @returns {Promise<object>} The metrics object.
+ * @throws {Error} If the API call fails.
+ */
+export async function fetchMetrics() {
+    // UI.appendLog("Récupération des métriques...", "info"); // Trop verbeux si appelé fréquemment
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/metrics`);
+        if (!response.ok) {
+            let errorMsg = `Erreur API métriques: ${response.status}`;
+            try {
+                const errorResult = await response.json();
+                errorMsg = errorResult.message || errorMsg;
+            } catch { /* Ignore if response is not JSON */ }
+            throw new Error(errorMsg);
+        }
+        const metrics = await response.json();
+        // console.debug("Metrics retrieved:", metrics); // Trop verbeux
+        return metrics;
+    } catch (error) {
+        console.error('Error fetching metrics:', error);
+        // UI.appendLog(`Erreur récupération métriques: ${error.message}`, 'error'); // Trop verbeux
+        throw error; // Re-throw to allow caller to handle
     }
 }

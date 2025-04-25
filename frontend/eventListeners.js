@@ -82,5 +82,24 @@ export function initializeEventListeners() {
         DOM.deleteSessionBtn.addEventListener('click', SessionManager.deleteSelectedSession);
     }
 
+    // Toggle system metrics visibility
+    const toggleButton = document.getElementById('toggle-system-metrics');
+    const metricsList = document.getElementById('system-metrics-list');
+
+    if (toggleButton && metricsList) {
+        toggleButton.addEventListener('click', () => {
+            if (metricsList.style.display === 'none') {
+                metricsList.style.display = 'block';
+                toggleButton.textContent = 'Masquer'; // Update button text
+            } else {
+                metricsList.style.display = 'none';
+                toggleButton.textContent = 'Afficher/Masquer'; // Reset button text
+            }
+        });
+    } else {
+        console.warn("Toggle button or system metrics list not found.");
+    }
+
+
     console.log("Event listeners initialized.");
 }

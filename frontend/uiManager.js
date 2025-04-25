@@ -1,15 +1,17 @@
 import * as DOM from './domElements.js';
 import { formatNumber, formatTimestamp } from './utils.js';
+import * as API from './apiService.js'; // Import API service to fetch metrics
 // Import sessionManager functions when available
 // import { fetchAndDisplaySessions } from './sessionManager.js';
 
 let lastKnownState = null; // Stocke le dernier état reçu pour référence interne
 let orderHistoryTable = null; // Instance DataTables
+let metricsPollingInterval = null; // Pour stocker l'ID de l'intervalle de polling des métriques
 
 /**
  * Initializes the DataTables instance for the order history table.
  */
-export function initializeOrderHistoryTable() {
+function initializeOrderHistoryTable() {
     try {
         if (!orderHistoryTable && typeof $ !== 'undefined' && $.fn.dataTable) {
             orderHistoryTable = $(DOM.orderHistoryTableId).DataTable({
@@ -42,7 +44,7 @@ export function initializeOrderHistoryTable() {
  * Updates the main UI elements based on the bot state.
  * @param {object} state - The state object received from the backend.
  */
-export function updateUI(state) {
+function updateUI(state) {
     if (!state) {
         console.warn("updateUI called with null or undefined state");
         return;
@@ -61,12 +63,17 @@ export function updateUI(state) {
     if (DOM.balanceValue) DOM.balanceValue.textContent = formatNumber(state.available_balance, 2);
     if (DOM.quantityValue) DOM.quantityValue.textContent = formatNumber(state.symbol_quantity, 8);
 
-    // Update Position Status
+    // Update Position Status and Entry Details
     if (DOM.positionValue) {
         if (state.in_position && state.entry_details) {
             const entryPrice = formatNumber(state.entry_details.avg_price, 2);
             const entryQty = formatNumber(state.entry_details.quantity, 8);
-            DOM.positionValue.textContent = `Oui (Entrée @ ${entryPrice}, Qté: ${entryQty})`;
+            const side = state.entry_details.side || 'N/A';
+            const slPrice = state.entry_details.sl_price ? formatNumber(state.entry_details.sl_price, 8) : 'N/A';
+            const tp1Price = state.entry_details.tp1_price ? formatNumber(state.entry_details.tp1_price, 8) : 'N/A';
+            const tp2Price = state.entry_details.tp2_price ? formatNumber(state.entry_details.tp2_price, 8) : 'N/A';
+
+            DOM.positionValue.innerHTML = `Oui (${side} @ ${entryPrice}, Qté: ${entryQty})<br>SL: ${slPrice}, TP1: ${tp1Price}, TP2: ${tp2Price}`;
             DOM.positionValue.className = 'status-running';
         } else {
             DOM.positionValue.textContent = 'Aucune';
@@ -90,6 +97,16 @@ export function updateUI(state) {
         }
         // Fill parameters based on the state's config
         fillParameters(state.config, currentStrategy);
+
+        // Update Capital Allocation display in Stats section
+        const capitalAllocationPercent = (parseFloat(state.config.CAPITAL_ALLOCATION) * 100).toFixed(2);
+        // Assuming there's a DOM element for Capital Allocation in the stats section
+        // If not, we might need to add one or integrate this into updateStatsDisplay
+        // For now, let's add it to the existing stats list if the element exists
+        const capitalAllocStat = document.getElementById('stat-capital-allocation'); // Need to add this ID in index.html
+        if (capitalAllocStat) {
+             capitalAllocStat.textContent = `${capitalAllocationPercent}%`;
+        }
     } else {
         console.warn("State received without config object. Cannot update parameters.");
     }
@@ -112,7 +129,7 @@ export function updateUI(state) {
  * @param {object} config - The configuration object from the bot state.
  * @param {string} strategyToFill - The strategy type ('SWING', 'SCALPING', 'SCALPING2') to fill parameters for.
  */
-export function fillParameters(config, strategyToFill) {
+function fillParameters(config, strategyToFill) {
     if (!config) {
         console.warn("fillParameters called without config object.");
         return;
@@ -175,7 +192,7 @@ export function fillParameters(config, strategyToFill) {
  * Updates the order history table using DataTables API.
  * @param {Array<object>} history - Array of order objects.
  */
-export function updateOrderHistory(history) {
+function updateOrderHistory(history) {
     if (!orderHistoryTable) {
         console.error("DataTables instance for order history not initialized!");
         // Attempt to initialize if not already done
@@ -256,7 +273,7 @@ export function updateOrderHistory(history) {
  * Updates the visibility of strategy-specific parameter sections.
  * @param {string} selectedStrategy - The strategy selected ('SWING', 'SCALPING', 'SCALPING2').
  */
-export function updateParameterVisibility(selectedStrategy) {
+function updateParameterVisibility(selectedStrategy) {
     // Hide all specific sections by default
     if (DOM.swingParamsDiv) DOM.swingParamsDiv.style.display = 'none';
     if (DOM.scalpingOrderBookParamsDiv) DOM.scalpingOrderBookParamsDiv.style.display = 'none';
@@ -287,7 +304,7 @@ export function updateParameterVisibility(selectedStrategy) {
  * @param {string} message - The message to log.
  * @param {string} [level='log'] - The log level ('log', 'info', 'warn', 'error').
  */
-export function appendLog(message, level = 'log') {
+function appendLog(message, level = 'log') {
     if (!DOM.logOutput) {
         console.error("logOutput element not found!");
         return;
@@ -304,7 +321,7 @@ export function appendLog(message, level = 'log') {
  * Updates the current price display based on ticker data.
  * @param {object|null} tickerData - The ticker data object (e.g., { b: 'bid', a: 'ask', c: 'last' }).
  */
-export function updatePriceDisplay(tickerData) {
+function updatePriceDisplay(tickerData) {
     let displayPrice = 'N/A';
     if (tickerData && tickerData.b && tickerData.a) { // Use best bid/ask if available
         try {
@@ -345,7 +362,7 @@ export function updatePriceDisplay(tickerData) {
  * Displays a trading signal event in the signals table.
  * @param {object} event - The signal event object from the backend.
  */
-export function displaySignalEvent(event) {
+function displaySignalEvent(event) {
     const container = DOM.signalsOutput; // Use imported element
     if (!container) return;
 
@@ -389,7 +406,7 @@ export function displaySignalEvent(event) {
  * Updates the statistics display area.
  * @param {object|null} stats - The statistics object or null to clear.
  */
-export function updateStatsDisplay(stats) {
+function updateStatsDisplay(stats) {
     if (!stats) {
         // Clear stats display
         if (DOM.statRoi) DOM.statRoi.textContent = 'N/A';
@@ -415,7 +432,7 @@ export function updateStatsDisplay(stats) {
  * @param {string} message - The message to display.
  * @param {'saving'|'success'|'error'|''} statusType - The type of status for styling.
  */
-export function updateParamSaveStatus(message, statusType) {
+function updateParamSaveStatus(message, statusType) {
     if (DOM.paramSaveStatus) {
         DOM.paramSaveStatus.textContent = message;
         DOM.paramSaveStatus.className = `status-${statusType}`; // Assumes CSS classes like status-saving, status-success, status-error
@@ -438,7 +455,7 @@ export function updateParamSaveStatus(message, statusType) {
  * Gets the currently selected strategy from the dropdown.
  * @returns {string|null} The selected strategy value or null if selector doesn't exist.
  */
-export function getSelectedStrategy() {
+function getSelectedStrategy() {
     return DOM.strategySelector ? DOM.strategySelector.value : null;
 }
 
@@ -447,6 +464,162 @@ export function getSelectedStrategy() {
  * Used for re-filling parameters when strategy changes.
  * @returns {object | null}
  */
-export function getLastKnownState() {
+function getLastKnownState() {
     return lastKnownState;
+}
+
+/**
+ * Starts the periodic polling for monitoring metrics.
+ */
+function startMetricsPolling() {
+    // Clear any existing interval first
+    if (metricsPollingInterval) {
+        clearInterval(metricsPollingInterval);
+    }
+    // Fetch metrics immediately on start
+    fetchAndDisplayMetrics();
+    // Set up interval for periodic fetching
+    metricsPollingInterval = setInterval(fetchAndDisplayMetrics, 5000); // Poll every 5 seconds
+    console.log("Started metrics polling.");
+}
+
+/**
+ * Stops the periodic polling for monitoring metrics.
+ */
+function stopMetricsPolling() {
+    if (metricsPollingInterval) {
+        clearInterval(metricsPollingInterval);
+        metricsPollingInterval = null;
+        console.log("Stopped metrics polling.");
+    }
+}
+
+/**
+ * Fetches metrics from the API and updates the relevant UI sections.
+ */
+async function fetchAndDisplayMetrics() {
+    try {
+        const metrics = await API.fetchMetrics();
+        if (metrics) {
+            // Update Performance Metrics (from /api/metrics -> metrics.performance)
+            if (metrics.performance) {
+                 const perf = metrics.performance;
+                 const winRateElement = document.getElementById('stat-winrate'); // Already exists
+                 const totalTradesElement = document.getElementById('stat-total'); // Already exists
+                 const profitFactorElement = document.getElementById('stat-profit-factor'); // Need to add this ID
+                 const maxDrawdownElement = document.getElementById('stat-max-drawdown'); // Need to add this ID
+                 const avgTradeDurationElement = document.getElementById('stat-avg-trade-duration'); // Need to add this ID
+                 const bestTradeElement = document.getElementById('stat-best-trade'); // Need to add this ID
+                 const worstTradeElement = document.getElementById('stat-worst-trade'); // Need to add this ID
+                 const avgProfitPerTradeElement = document.getElementById('stat-avg-profit-per-trade'); // Need to add this ID
+                 const sharpeRatioElement = document.getElementById('stat-sharpe-ratio'); // Need to add this ID
+
+                 if (winRateElement) winRateElement.textContent = (perf.win_rate !== undefined && perf.win_rate !== null) ? `${formatNumber(perf.win_rate * 100, 2)}%` : 'N/A';
+                 if (totalTradesElement) totalTradesElement.textContent = perf.total_trades ?? 'N/A';
+                 // Ajoutez les lignes suivantes pour mettre à jour les autres éléments de performance
+                 if (profitFactorElement) profitFactorElement.textContent = (perf.profit_factor !== undefined && perf.profit_factor !== null) ? formatNumber(perf.profit_factor, 2) : 'N/A';
+                 if (maxDrawdownElement) maxDrawdownElement.textContent = (perf.max_drawdown !== undefined && perf.max_drawdown !== null) ? `${formatNumber(perf.max_drawdown * 100, 2)}%` : 'N/A'; // Assuming drawdown is a fraction
+                 if (avgTradeDurationElement) avgTradeDurationElement.textContent = (perf.avg_trade_duration !== undefined && perf.avg_trade_duration !== null) ? `${formatNumber(perf.avg_trade_duration / 60, 1)} min` : 'N/A'; // Assuming duration is in seconds
+                 if (bestTradeElement) bestTradeElement.textContent = (perf.best_trade !== undefined && perf.best_trade !== null) ? `${formatNumber(perf.best_trade * 100, 2)}%` : 'N/A'; // Assuming trade results are fractions
+                 if (worstTradeElement) worstTradeElement.textContent = (perf.worst_trade !== undefined && perf.worst_trade !== null) ? `${formatNumber(perf.worst_trade * 100, 2)}%` : 'N/A'; // Assuming trade results are fractions
+                 if (avgProfitPerTradeElement) avgProfitPerTradeElement.textContent = (perf.avg_profit_per_trade !== undefined && perf.avg_profit_per_trade !== null) ? `${formatNumber(perf.avg_profit_per_trade * 100, 2)}%` : 'N/A'; // Assuming profit is a fraction
+                 if (sharpeRatioElement) sharpeRatioElement.textContent = (perf.sharpe_ratio !== undefined && perf.sharpe_ratio !== null) ? formatNumber(perf.sharpe_ratio, 2) : 'N/A';
+
+            }
+
+            // Update System Metrics (from /api/metrics -> metrics.system)
+            if (metrics.system) {
+                 const system = metrics.system;
+                 const cpuUsageElement = document.getElementById('stat-cpu-usage'); // Need to add this ID
+                 const memoryUsageElement = document.getElementById('stat-memory-usage'); // Need to add this ID
+                 const diskUsageElement = document.getElementById('stat-disk-usage'); // Need to add this ID
+                 const memoryAvailableElement = document.getElementById('stat-memory-available'); // Need to add this ID
+                 const swapUsageElement = document.getElementById('stat-swap-usage'); // Need to add this ID
+                 const networkIoSentElement = document.getElementById('stat-network-io-sent'); // Need to add this ID
+                 const networkIoRecvElement = document.getElementById('stat-network-io-recv'); // Need to add this ID
+                 const processThreadsElement = document.getElementById('stat-process-threads'); // Need to add this ID
+                 const systemUptimeElement = document.getElementById('stat-system-uptime'); // Need to add this ID
+                 const botUptimeElement = document.getElementById('stat-bot-uptime'); // Need to add this ID
+
+                 // Ajoutez les lignes suivantes pour mettre à jour les éléments système
+                 if (cpuUsageElement) cpuUsageElement.textContent = (system.cpu_usage !== undefined && system.cpu_usage !== null) ? `${formatNumber(system.cpu_usage, 1)}%` : 'N/A';
+                 if (memoryUsageElement) memoryUsageElement.textContent = (system.memory_usage !== undefined && system.memory_usage !== null) ? `${formatNumber(system.memory_usage, 1)}%` : 'N/A';
+                 if (diskUsageElement) diskUsageElement.textContent = (system.disk_usage !== undefined && system.disk_usage !== null) ? `${formatNumber(system.disk_usage, 1)}%` : 'N/A';
+                 if (memoryAvailableElement) memoryAvailableElement.textContent = (system.memory_available !== undefined && system.memory_available !== null) ? `${formatNumber(system.memory_available / (1024 * 1024), 2)} MB` : 'N/A'; // Assuming bytes, convert to MB
+                 if (swapUsageElement) swapUsageElement.textContent = (system.swap_usage !== undefined && system.swap_usage !== null) ? `${formatNumber(system.swap_usage, 1)}%` : 'N/A';
+                 if (networkIoSentElement) networkIoSentElement.textContent = (system.network_io_sent !== undefined && system.network_io_sent !== null) ? `${formatNumber(system.network_io_sent / 1024, 2)} KB/s` : 'N/A'; // Assuming bytes/s, convert to KB/s
+                 if (networkIoRecvElement) networkIoRecvElement.textContent = (system.network_io_recv !== undefined && system.network_io_recv !== null) ? `${formatNumber(system.network_io_recv / 1024, 2)} KB/s` : 'N/A'; // Assuming bytes/s, convert to KB/s
+                 if (processThreadsElement) processThreadsElement.textContent = system.process_threads ?? 'N/A';
+                 if (systemUptimeElement) systemUptimeElement.textContent = (system.system_uptime !== undefined && system.system_uptime !== null) ? `${formatNumber(system.system_uptime / 60, 0)} min` : 'N/A'; // Assuming seconds
+                 if (botUptimeElement) botUptimeElement.textContent = (system.bot_uptime !== undefined && system.bot_uptime !== null) ? `${formatNumber(system.bot_uptime / 60, 0)} min` : 'N/A'; // Assuming seconds
+
+            }
+
+            // Update Realtime Metrics (from /api/metrics -> metrics.realtime)
+            if (metrics.realtime) {
+                 const realtime = metrics.realtime;
+                 const ordersPerMinuteElement = document.getElementById('stat-orders-per-minute'); // Need to add this ID
+                 const apiCallsPerMinuteElement = document.getElementById('stat-api-calls-per-minute'); // Need to add this ID
+                 const wsReconnectsElement = document.getElementById('stat-ws-reconnects'); // Need to add this ID
+                 const lastOrderLatencyElement = document.getElementById('stat-last-order-latency'); // Need to add this ID
+                 const averageOrderLatencyElement = document.getElementById('stat-average-order-latency'); // Need to add this ID
+                 const orderQueueSizeElement = document.getElementById('stat-order-queue-size'); // Need to add this ID
+                 const lastSignalTimeElement = document.getElementById('stat-last-signal-time'); // Need to add this ID
+                 const signalsPerHourElement = document.getElementById('stat-signals-per-hour'); // Need to add this ID
+                 const currentPositionDurationElement = document.getElementById('stat-current-position-duration'); // Need to add this ID
+                 const lastErrorTimeElement = document.getElementById('stat-last-error-time'); // Need to add this ID
+                 const errorCountElement = document.getElementById('stat-error-count'); // Need to add this ID
+
+                 // Ajoutez les lignes suivantes pour mettre à jour les éléments temps réel
+                 if (ordersPerMinuteElement) ordersPerMinuteElement.textContent = (realtime.orders_per_minute !== undefined && realtime.orders_per_minute !== null) ? formatNumber(realtime.orders_per_minute, 1) : 'N/A';
+                 if (apiCallsPerMinuteElement) apiCallsPerMinuteElement.textContent = (realtime.api_calls_per_minute !== undefined && realtime.api_calls_per_minute !== null) ? formatNumber(realtime.api_calls_per_minute, 1) : 'N/A';
+                 if (wsReconnectsElement) wsReconnectsElement.textContent = realtime.websocket_reconnects ?? 'N/A';
+                 if (lastOrderLatencyElement) lastOrderLatencyElement.textContent = (realtime.last_order_latency_ms !== undefined && realtime.last_order_latency_ms !== null) ? `${formatNumber(realtime.last_order_latency_ms, 0)} ms` : 'N/A';
+                 if (averageOrderLatencyElement) averageOrderLatencyElement.textContent = (realtime.average_order_latency_ms !== undefined && realtime.average_order_latency_ms !== null) ? `${formatNumber(realtime.average_order_latency_ms, 0)} ms` : 'N/A';
+                 if (orderQueueSizeElement) orderQueueSizeElement.textContent = realtime.order_queue_size ?? 'N/A';
+                 if (lastSignalTimeElement) lastSignalTimeElement.textContent = (realtime.last_signal_time !== undefined && realtime.last_signal_time !== null) ? new Date(realtime.last_signal_time * 1000).toLocaleTimeString() : 'N/A'; // Assuming timestamp in seconds
+                 if (signalsPerHourElement) signalsPerHourElement.textContent = (realtime.signals_per_hour !== undefined && realtime.signals_per_hour !== null) ? formatNumber(realtime.signals_per_hour, 1) : 'N/A';
+                 if (currentPositionDurationElement) currentPositionDurationElement.textContent = (realtime.current_position_duration_seconds !== undefined && realtime.current_position_duration_seconds !== null) ? `${formatNumber(realtime.current_position_duration_seconds / 60, 0)} min` : 'N/A'; // Assuming seconds
+                 if (lastErrorTimeElement) lastErrorTimeElement.textContent = (realtime.last_error_time !== undefined && realtime.last_error_time !== null) ? new Date(realtime.last_error_time * 1000).toLocaleTimeString() : 'N/A'; // Assuming timestamp in seconds
+                 if (errorCountElement) errorCountElement.textContent = realtime.error_count ?? 'N/A';
+
+            }
+
+            // Note: Chart updates are not handled here, as the plan is to integrate metrics into existing stats section.
+            // The monitoring.js file's chart logic might become redundant or need to be adapted.
+
+        }
+    } catch (error) {
+        console.error('Error fetching and displaying metrics:', error);
+        // UI.appendLog(`Erreur affichage métriques: ${error.message}`, 'error'); // Trop verbeux
+        // Optionally clear metric displays on error
+    }
+}
+// Keep updateOrderHistory, updateParameterVisibility, appendLog, updatePriceDisplay, displaySignalEvent, updateStatsDisplay, getSelectedStrategy, getLastKnownState as they are.
+
+// Remove or comment out the initializeMonitoring and updateMetrics functions from monitoring.js if they are integrated here.
+// The plan is to integrate, so let's assume monitoring.js will be removed or refactored.
+// The logic from monitoring.js's updateMetrics is now partially moved into fetchAndDisplayMetrics.
+// The chart logic from monitoring.js is not being moved here as per the plan to integrate into existing stats.
+
+// // Export the new functions
+export {
+    initializeOrderHistoryTable,
+    updateUI,
+    fillParameters,
+    updateOrderHistory,
+    updateParameterVisibility,
+    updateParamSaveStatus,
+    appendLog,
+    updatePriceDisplay,
+    displaySignalEvent,
+    updateStatsDisplay,
+    getSelectedStrategy,
+    getLastKnownState,
+    startMetricsPolling,
+    stopMetricsPolling,  
+    fetchAndDisplayMetrics,
+    
+    
+    
 }

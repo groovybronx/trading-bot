@@ -22,11 +22,10 @@
                 <p>État : <span id="status-value">Inconnu</span></p>
                 <p>Stratégie : <span id="strategy-type-value">N/A</span></p>
                 <p>Symbole : <span id="symbol-value">N/A</span></p>
-                <p>Timeframe : <span id="timeframe-value">N/A</span> <small id="timeframe-relevance">(Pertinent pour SWING)</small></p>
                 <p>Balance (<span id="quote-asset-label">USDT</span>) : <span id="balance-value">N/A</span></p>
                 <p>Quantité (<span id="base-asset-label">N/A</span>) : <span id="quantity-value">N/A</span></p>
                 <p>Prix Actuel (<span id="symbol-price-label">N/A</span>) : <span id="current-price" class="status-value">N/A</span></p>
-                <p>Position Actuelle : <span id="position-value">Aucune</span></p>
+               
             </section>
 
             <section id="stats">
@@ -36,13 +35,43 @@
                     <li>Winrate : <span id="stat-winrate">N/A</span></li>
                     <li>Trades gagnants : <span id="stat-wins">N/A</span></li>
                     <li>Trades perdants : <span id="stat-losses">N/A</span></li>
-                    <li>Nombre total Trades : <span id="stat-total">N/A</span></li>
-                    <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
-                </ul>
-            </section>
-        </div> <!-- Fin du conteneur top-sections-container -->
+                <li>Nombre total Trades : <span id="stat-total">N/A</span></li>
+                <li>PNL moyen : <span id="stat-avg-pnl">N/A</span></li>
+                <li>Capital Investi : <span id="stat-capital-invested">N/A</span></li>
+                <li>SL Position : <span id="stat-position-sl">N/A</span></li>
+                <li>TP1 Position : <span id="stat-position-tp1">N/A</span></li>
+                <li>TP2 Position : <span id="stat-position-tp2">N/A</span></li>
+                <li>Win Rate : <span id="stat-winrate-overall">N/A</span></li>
+                <li>Profit Factor : <span id="stat-profit-factor">N/A</span></li>
+                <li>Total Profit : <span id="stat-total-profit">N/A</span></li>
+                <li>Max Drawdown : <span id="stat-max-drawdown">N/A</span></li>
+                <li>Avg Trade Duration : <span id="stat-avg-trade-duration">N/A</span></li>
+                <li>Best Trade : <span id="stat-best-trade">N/A</span></li>
+                <li>Worst Trade : <span id="stat-worst-trade">N/A</span></li>
+                <li>Avg Profit per Trade : <span id="stat-avg-profit-per-trade">N/A</span></li>
+                <li>Sharpe Ratio : <span id="stat-sharpe-ratio">N/A</span></li>
+            </ul>
 
-        <!-- NOUVELLE SECTION: Gestion des Sessions -->
+           
+            <h3>Métriques Informatiques <button id="toggle-system-metrics">Afficher/Masquer</button></h3>
+            <ul id="system-metrics-list" style="display: none;"> <!-- Masqué par défaut -->
+                <li>Bot Uptime : <span id="stat-bot-uptime">N/A</span></li>
+                <li>Orders per Minute : <span id="stat-orders-per-minute">N/A</span></li>
+                <li>API Calls per Minute : <span id="stat-api-calls-per-minute">N/A</span></li>
+                <li>WS Reconnects : <span id="stat-ws-reconnects">N/A</span></li>
+                <li>Last Order Latency : <span id="stat-last-order-latency">N/A</span></li>
+                <li>Average Order Latency : <span id="stat-average-order-latency">N/A</span></li>
+                <li>Order Queue Size : <span id="stat-order-queue-size">N/A</span></li>
+                <li>Last Signal Time : <span id="stat-last-signal-time">N/A</span></li>
+                <li>Signals per Hour : <span id="stat-signals-per-hour">N/A</span></li>
+                <li>Current Position Duration : <span id="stat-current-position-duration">N/A</span></li>
+                <li>Last Error Time : <span id="stat-last-error-time">N/A</span></li>
+                <li>Error Count : <span id="stat-error-count">N/A</span></li>
+            </ul>
+        </section>
+    </div>
+
+        <!--  Gestion des Sessions -->
         <section id="session-management">
             <h2>Gestion des Sessions</h2>
             <div class="session-controls">
@@ -58,9 +87,9 @@
         
 
         <section id="order-history">
-            <h2>Historique des Ordres (Session <span id="history-session-id">N/A</span>)</h2> <!-- Titre modifié -->
+            <h2>Historique des Ordres (Session <span id="history-session-id">N/A</span>)</h2>
             <div class="table-container">
-                <table id="order-history-table"> <!-- Ajout ID pour DataTables -->
+                <table id="order-history-table">
                     <thead>
                         <tr>
                             <th>Date/Heure</th>

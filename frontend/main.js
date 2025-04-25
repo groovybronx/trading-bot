@@ -39,3 +39,11 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('beforeunload', () => {
     WebSocketService.disconnectWebSocket(); // Ferme la connexion WS proprement
 });
+
+// Démarrer le polling des métriques lorsque la connexion WebSocket est ouverte
+// Cette logique est maintenant dans websocketService.js onopen handler
+// UI.startMetricsPolling(); // REMOVED - Handled by websocketService.js
+
+// Arrêter le polling des métriques lorsque la connexion WebSocket est fermée
+// Cette logique est maintenant dans websocketService.js onclose handler
+// UI.stopMetricsPolling(); // REMOVED - Handled by websocketService.js

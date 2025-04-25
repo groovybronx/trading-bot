@@ -130,6 +130,45 @@ Ce projet est un bot de trading pour Binance (Spot) écrit en Python, accompagn�
 3.  **Ouvrir le Dashboard :**
     Ouvrez votre navigateur web et allez à l'adresse indiquée par Flask (généralement `http://127.0.0.1:5000`).
 
+## Stratégies
+
+### Stratégie Scalping
+
+Cette stratégie de scalping (`SCALPING`) prend des décisions d'entrée basées sur l'analyse du **carnet d'ordres (order book)** et de l'**écart (spread)** entre les meilleurs prix d'achat et de vente. Elle n'utilise pas d'indicateurs techniques basés sur les chandeliers (klines) comme les moyennes mobiles ou le RSI.
+
+**1. Données Utilisées :**
+
+*   `book_ticker` : Fournit les meilleurs prix d'achat (bid) et de vente (ask) actuels.
+*   `depth` : Fournit un aperçu de la profondeur du carnet d'ordres, c'est-à-dire les quantités disponibles à différents niveaux de prix d'achat et de vente.
+
+**2. Logique d'Entrée (check\_entry\_signal) :**
+
+*   **Calcul de l'Écart Relatif (Relative Spread) :** Calcule l'écart entre le meilleur prix de vente et le meilleur prix d'achat, divisé par le meilleur prix de vente. Cela donne une mesure de l'écart relatif entre l'offre et la demande.
+*   **Calcul du Ratio de Déséquilibre (Imbalance Ratio) :** Examine les `SCALPING_DEPTH_LEVELS` premiers niveaux du carnet d'ordres (par défaut, les 5 meilleurs niveaux). Calcule le ratio entre la quantité totale d'ordres d'achat (bids) et la quantité totale d'ordres de vente (asks). Cela donne une indication du déséquilibre entre la pression d'achat et la pression de vente.
+*   **Conditions d'Achat (BUY) :** Un signal d'achat est généré si les conditions suivantes sont remplies :
+    *   L'écart relatif est inférieur à un seuil défini (`SCALPING_SPREAD_THRESHOLD`). Cela signifie que l'écart entre l'offre et la demande est faible.
+    *   Le ratio de déséquilibre est supérieur à un seuil défini (`SCALPING_IMBALANCE_THRESHOLD`). Cela signifie qu'il y a une pression d'achat significativement plus forte que la pression de vente.
+*   **Type d'Ordre :**
+    *   Si le type d'ordre configuré est `LIMIT`, la stratégie calcule une quantité à acheter en fonction du capital disponible et du risque par transaction, puis place un ordre LIMIT à un prix égal au meilleur prix de vente actuel.
+    *   Si le type d'ordre configuré est `MARKET`, la stratégie calcule le montant de capital à utiliser (en USDT) et place un ordre MARKET en utilisant `quoteOrderQty` (c'est-à-dire en spécifiant le montant d'USDT à dépenser).
+
+**3. Logique de Sortie (check\_exit\_signal) :**
+
+*   La stratégie de scalping se fie aux ordres Stop Loss et Take Profit pour sortir d'une position. De plus, elle peut utiliser une stratégie de sortie basée sur l'inversion du déséquilibre du carnet d'ordres.
+
+**4. Paramètres Principaux :**
+
+*   `SCALPING_SPREAD_THRESHOLD` : Seuil pour l'écart relatif. Un écart inférieur à ce seuil est considéré comme favorable à l'entrée.
+*   `SCALPING_IMBALANCE_THRESHOLD` : Seuil pour le ratio de déséquilibre. Un ratio supérieur à ce seuil indique une forte pression d'achat.
+*   `SCALPING_DEPTH_LEVELS` : Nombre de niveaux du carnet d'ordres à utiliser pour calculer le ratio de déséquilibre.
+*   `SCALPING_ORDER_TYPE` : Type d'ordre à utiliser ("MARKET" ou "LIMIT").
+*   `SCALPING_LIMIT_TIF` : Time In Force pour ordres LIMIT ("GTC", "IOC", "FOK").
+*   `SCALPING_LIMIT_ORDER_TIMEOUT_MS` : Temps (ms) avant d'annuler un ordre LIMIT non rempli.
+*   `CAPITAL_ALLOCATION` : Fraction du capital total à utiliser pour chaque transaction.
+*   `RISK_PER_TRADE` : Fraction du capital à risquer par transaction (pour le calcul du Stop Loss).
+*   `STOP_LOSS_PERCENTAGE` : Pourcentage de Stop Loss.
+*   `TAKE_PROFIT_1_PERCENTAGE` : Pourcentage de Take Profit.
+
 ## Nouveautés et Points Importants (2025)
 
 *   **Paramètres Généraux Centralisés :**
